@@ -1,4 +1,4 @@
-use crate::{cache::Cache, indexer::symbol::calculate_file_hash};
+use crate::{cache::Cache, indexer::calculate_file_hash};
 
 pub fn handle_check(file: &str, cache: &mut Cache) -> Result<(), Box<dyn std::error::Error>> {
     let file_hash = calculate_file_hash(file).ok_or("File read error")?;
@@ -10,3 +10,4 @@ pub fn handle_check(file: &str, cache: &mut Cache) -> Result<(), Box<dyn std::er
     }
     Ok(())
 }
+

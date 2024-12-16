@@ -1,5 +1,7 @@
 use std::fs;
 
+use crate::indexer::calculate_file_hash;
+use crate::indexer::symbol::{delete_symbol, get_linked_symbols_from_objects, store_symbol};
 use crate::indexer::{symbol, Indexer};
 use crate::parser::CodeParser;
 
@@ -79,7 +81,7 @@ pub fn process_file(
     code_parser: &mut CodeParser,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Processing file: '{}'", file);
-    let file_hash: String = symbol::calculate_file_hash(file).ok_or("File read error")?;
+    let file_hash: String = calculate_file_hash(file).ok_or("File read error")?;
 
     if indexer.has_changed(file, &file_hash) {
         println!(
@@ -96,7 +98,7 @@ pub fn process_file(
         // Process new symbols
         for new_symbol in &new_symbols {
             indexer.add_symbol(new_symbol.clone());
-            indexer.store_symbol(new_symbol)?;
+            store_symbol(new_symbol)?;
         }
 
         indexer.store_file_hash(file, &file_hash);
@@ -113,6 +115,19 @@ pub fn process_file(
                     indexer.add_symbol(symbol.clone());
                 }
             }
+        }
+    }
+
+    let stored_symbols = indexer.get_symbols_for_file(file);
+    let linked_symbols = get_linked_symbols_from_objects(file)?;
+
+    for linked_symbol in linked_symbols {
+        if !stored_symbols
+            .iter()
+            .any(|s| s.hash() == linked_symbol.hash())
+        {
+            println!("Removing stale symbol: {:?}", linked_symbol);
+            delete_symbol(&linked_symbol)?;
         }
     }
 

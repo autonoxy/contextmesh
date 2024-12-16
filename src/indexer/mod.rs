@@ -2,11 +2,11 @@ pub mod symbol;
 
 use crate::indexer::symbol::Symbol;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
     io::{Error, ErrorKind},
-    path::Path,
 };
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -73,50 +73,6 @@ impl Indexer {
         self.symbols.insert(symbol.name.clone(), symbol);
     }
 
-    pub fn store_symbol(&self, symbol: &Symbol) -> std::io::Result<()> {
-        // Compute the hash and construct the directory path
-        let hash = symbol.hash();
-        let dir = format!(".contextmesh/objects/{}", &hash[0..2]);
-        let file_name = format!("{}.bin", &hash[2..]);
-        let full_path = Path::new(&dir).join(file_name);
-
-        // Log the directory path and file path
-        println!("Creating directory: {}", dir);
-        println!("Storing symbol in file: {}", full_path.display());
-
-        // Create the directory if it doesn't exist
-        match fs::create_dir_all(&dir) {
-            Ok(_) => println!("Successfully created directory: {}", dir),
-            Err(e) => {
-                eprintln!("Failed to create directory '{}': {}", dir, e);
-                return Err(e);
-            }
-        }
-
-        // Serialize the symbol using bincode
-        let encoded: Vec<u8> = match bincode::serialize(symbol) {
-            Ok(data) => data,
-            Err(e) => {
-                eprintln!("Serialization failed for symbol: {:?}", e);
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    format!("Serialization failed: {}", e),
-                ));
-            }
-        };
-
-        // Write the serialized symbol to the file
-        match fs::write(&full_path, encoded) {
-            Ok(_) => println!("Successfully stored symbol in: {}", full_path.display()),
-            Err(e) => {
-                eprintln!("Failed to write symbol to '{}': {}", full_path.display(), e);
-                return Err(e);
-            }
-        }
-
-        Ok(())
-    }
-
     /*
     pub fn load_symbol(hash: &str) -> Option<Symbol> {
         let dir = format!(".contextmesh/objects/{}/", &hash[0..2]);
@@ -132,6 +88,14 @@ impl Indexer {
         &self.symbols
     }
 
+    pub fn get_symbols_for_file(&self, file: &str) -> Vec<symbol::Symbol> {
+        self.get_symbols()
+            .values()
+            .filter(|symbol| symbol.file_path == file)
+            .cloned()
+            .collect()
+    }
+
     pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
         match self.file_hashes.get(file_path) {
             Some(existing_hash) => existing_hash != new_hash,
@@ -143,4 +107,11 @@ impl Indexer {
         self.file_hashes
             .insert(file.to_string(), file_hash.to_string());
     }
+}
+
+pub fn calculate_file_hash(file_path: &str) -> Option<String> {
+    let content = std::fs::read(file_path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    Some(format!("{:x}", hasher.finalize()))
 }
