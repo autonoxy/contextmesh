@@ -19,26 +19,10 @@ impl Cache {
         }
     }
 
-    pub fn save(&self, path: &str) {
-        if let Ok(data) = bincode::serialize(self) {
-            let _ = std::fs::write(path, data);
-        }
-    }
-
     pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
         match self.file_hashes.get(file_path) {
             Some(existing_hash) => existing_hash != new_hash,
             None => true,
         }
-    }
-
-    pub fn update(
-        &mut self,
-        file_path: String,
-        new_hash: String,
-        symbol_offsets: Vec<(usize, usize)>,
-    ) {
-        self.file_hashes.insert(file_path.clone(), new_hash);
-        self.symbol_offsets.insert(file_path, symbol_offsets);
     }
 }

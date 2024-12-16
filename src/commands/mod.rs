@@ -1,6 +1,6 @@
-pub mod index;
 pub mod check;
 pub mod combine;
+pub mod index;
 pub mod print_index;
 
 use clap::{Parser, Subcommand};
@@ -35,9 +35,10 @@ pub fn run_command(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = Cache::load(".contextmesh/cache.bin");
 
     match args.command {
-        Commands::Index { file, language } => index::handle_index(&file, &language, &mut cache),
+        Commands::Index { file, language } => index::handle_index(&file, &language),
         Commands::Check { file } => check::handle_check(&file, &mut cache),
         Commands::Combine => combine::handle_combine(&cache),
         Commands::PrintIndex => print_index::handle_print_index(),
     }
 }
+
