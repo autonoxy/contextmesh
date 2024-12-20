@@ -107,6 +107,10 @@ impl Indexer {
         self.file_hashes
             .insert(file.to_string(), file_hash.to_string());
     }
+
+    pub fn get_file_hashes(&self) -> &HashMap<String, String> {
+        &self.file_hashes
+    }
 }
 
 pub fn calculate_file_hash(file_path: &str) -> Option<String> {

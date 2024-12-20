@@ -1,11 +1,12 @@
-use crate::cache::Cache;
-use std::fs;
+use crate::indexer::Indexer;
 use arboard::Clipboard;
+use std::fs;
 
-pub fn handle_combine(cache: &Cache) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_combine() -> Result<(), Box<dyn std::error::Error>> {
+    let indexer = Indexer::load_index()?;
     let mut combined_content = String::new();
 
-    for file_path in cache.file_hashes.keys() {
+    for file_path in indexer.get_file_hashes().keys() {
         if let Ok(content) = fs::read_to_string(file_path) {
             combined_content.push_str(&format!("# {}\n\n{}\n\n", file_path, content));
         } else {
@@ -25,3 +26,4 @@ pub fn handle_combine(cache: &Cache) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nCombined Content:\n{}", combined_content);
     Ok(())
 }
+
