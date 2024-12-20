@@ -1,11 +1,9 @@
-pub mod index;
 pub mod check;
 pub mod combine;
+pub mod index;
 pub mod print_index;
 
 use clap::{Parser, Subcommand};
-
-use crate::cache::Cache;
 
 #[derive(Parser)]
 #[command(name = "contextmesh")]
@@ -32,12 +30,10 @@ pub enum Commands {
 }
 
 pub fn run_command(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cache = Cache::load(".contextmesh/cache.bin");
-
     match args.command {
-        Commands::Index { file, language } => index::handle_index(&file, &language, &mut cache),
-        Commands::Check { file } => check::handle_check(&file, &mut cache),
-        Commands::Combine => combine::handle_combine(&cache),
+        Commands::Index { file, language } => index::handle_index(&file, &language),
+        Commands::Check { file } => check::handle_check(&file),
+        Commands::Combine => combine::handle_combine(),
         Commands::PrintIndex => print_index::handle_print_index(),
     }
 }
