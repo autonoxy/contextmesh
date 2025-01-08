@@ -12,9 +12,10 @@ pub fn handle_print_index() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Indexed symbols:");
-    for symbol in indexer.get_symbols().values() {
-        println!("Symbol: {:?}", symbol);
+    for (hash, symbol) in indexer.get_symbols() {
+        println!("Hash: {}, Symbol: {:?}", hash, symbol);
     }
 
     Ok(())
 }
+

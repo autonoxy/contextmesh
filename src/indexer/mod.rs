@@ -70,30 +70,16 @@ impl Indexer {
     }
 
     pub fn add_symbol(&mut self, symbol: Symbol) {
-        self.symbols.insert(symbol.name.clone(), symbol);
+        let key = symbol.hash();
+        self.symbols.insert(key, symbol);
     }
-
-    /*
-    pub fn load_symbol(hash: &str) -> Option<Symbol> {
-        let dir = format!(".contextmesh/objects/{}/", &hash[0..2]);
-        let file_path = format!("{}.bin", &hash[2..]);
-        let full_path = Path::new(&dir).join(file_path);
-
-        let data = fs::read(full_path).ok()?;
-        bincode::deserialize(&data).ok()
-    }
-    */
 
     pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
         &self.symbols
     }
 
-    pub fn get_symbols_for_file(&self, file: &str) -> Vec<symbol::Symbol> {
-        self.get_symbols()
-            .values()
-            .filter(|symbol| symbol.file_path == file)
-            .cloned()
-            .collect()
+    pub fn replace_symbols(&mut self, new_symbols: HashMap<String, Symbol>) {
+        self.symbols = new_symbols;
     }
 
     pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
@@ -110,6 +96,17 @@ impl Indexer {
 
     pub fn get_file_hashes(&self) -> &HashMap<String, String> {
         &self.file_hashes
+    }
+
+    pub fn build_name_map(&self) -> HashMap<String, Vec<String>> {
+        let mut name_map = HashMap::new();
+        for (hash, sym) in &self.symbols {
+            name_map
+                .entry(sym.name.clone())
+                .or_insert_with(Vec::new)
+                .push(hash.clone());
+        }
+        name_map
     }
 }
 
