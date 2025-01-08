@@ -24,22 +24,12 @@ impl LanguageIndexer for RustIndexer {
         ]
     }
 
-    fn build_qualified_name(
-        &self,
-        current_module: &Vec<String>,
-        node: Node,
-        code: &[u8],
-    ) -> Option<String> {
+    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Option<String> {
         // Extract the symbol's short name
         let name_node = node.child_by_field_name("name")?;
         let short_name = name_node.utf8_text(code).ok()?;
 
-        // Combine with current module path
-        if current_module.is_empty() {
-            Some(short_name.to_string())
-        } else {
-            Some(format!("{}::{}", current_module.join("::"), short_name))
-        }
+        Some(short_name.to_string())
     }
 
     fn process_import_declaration(
@@ -97,7 +87,8 @@ impl LanguageIndexer for RustIndexer {
             "scoped_identifier" => {
                 // e.g., "commands::run_command"
                 let raw = node.utf8_text(code).ok()?;
-                Some(raw.to_string())
+
+                Some(raw.split("::").last().map(|s| s.to_string())?)
             }
             "field_expression" => {
                 // e.g., "my_struct.foo" - typically method calls aren't re-exported

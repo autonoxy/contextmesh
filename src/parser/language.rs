@@ -11,12 +11,7 @@ pub trait LanguageIndexer {
     fn allowed_definition_kinds(&self) -> &'static [&'static str];
 
     /// Given a node for a definition, build its fully qualified name.
-    fn build_qualified_name(
-        &self,
-        current_module: &Vec<String>,
-        node: Node,
-        code: &[u8],
-    ) -> Option<String>;
+    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Option<String>;
 
     /// If the language supports import/use statements, parse them to fill `imports`.
     fn process_import_declaration(
@@ -41,4 +36,3 @@ pub trait LanguageIndexer {
     /// Handle exiting a module scope.
     fn exit_module(&self, current_module: &mut Vec<String>);
 }
-

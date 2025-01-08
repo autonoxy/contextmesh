@@ -78,7 +78,6 @@ impl CodeParser {
             &mut symbols,
             &imports,
             &mut symbol_stack,
-            &mut current_module,
         );
 
         (symbols, imports)
@@ -105,7 +104,7 @@ fn collect_definitions_and_imports(
 
     // If node kind is in `allowed_definition_kinds`, build a Symbol:
     if lang.allowed_definition_kinds().contains(&node_kind) {
-        if let Some(full_name) = lang.build_qualified_name(current_module, node, code) {
+        if let Some(full_name) = lang.build_qualified_name(node, code) {
             let start = node.start_position();
             symbols.push(Symbol {
                 name: full_name,
@@ -146,11 +145,7 @@ fn gather_references(
     symbols: &mut Vec<Symbol>,
     imports: &HashMap<String, String>,
     symbol_stack: &mut Vec<usize>,
-    current_module: &mut Vec<String>,
 ) {
-    // Enter module if applicable
-    lang.enter_module(node, code, current_module);
-
     let node_kind = node.kind();
 
     // If there's a 'name' field, this might be a new symbol scope
@@ -163,16 +158,7 @@ fn gather_references(
 
             // Recurse children
             for child in node.children(&mut node.walk()) {
-                gather_references(
-                    lang,
-                    child,
-                    code,
-                    file_path,
-                    symbols,
-                    imports,
-                    symbol_stack,
-                    current_module,
-                );
+                gather_references(lang, child, code, file_path, symbols, imports, symbol_stack);
             }
 
             symbol_stack.pop();
@@ -203,18 +189,6 @@ fn gather_references(
 
     // Recurse children
     for child in node.children(&mut node.walk()) {
-        gather_references(
-            lang,
-            child,
-            code,
-            file_path,
-            symbols,
-            imports,
-            symbol_stack,
-            current_module,
-        );
+        gather_references(lang, child, code, file_path, symbols, imports, symbol_stack);
     }
-
-    // Exit module if applicable
-    lang.exit_module(current_module);
 }
