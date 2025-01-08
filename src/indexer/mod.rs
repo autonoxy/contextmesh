@@ -45,7 +45,7 @@ impl Indexer {
         })?;
 
         println!(
-            "Loaded index: {} file, {} symbols.",
+            "Loaded index: {} file(s), {} symbol(s).",
             indexer.file_hashes.len(),
             indexer.symbols.len(),
         );
@@ -61,7 +61,7 @@ impl Indexer {
         fs::write(path, encoded)?;
 
         println!(
-            "Index saved: {} files, {} symbols.",
+            "Index saved: {} file(s), {} symbol(s).",
             self.file_hashes.len(),
             self.symbols.len(),
         );
@@ -69,6 +69,7 @@ impl Indexer {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn add_symbol(&mut self, symbol: Symbol) {
         let key = symbol.hash();
         self.symbols.insert(key, symbol);

@@ -1,3 +1,5 @@
+// src/commands/index.rs
+
 use std::collections::HashMap;
 use std::fs;
 
@@ -35,7 +37,8 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
         // Only parse if the file has changed
         if indexer.has_changed(&file_path, &file_hash) {
             println!("File '{}' changed. Parsing...", file_path);
-            let (parsed_syms, _parsed_imports) = code_parser.parse_file(&file_path, language);
+            // **Remove the 'language' argument here**
+            let (parsed_syms, _parsed_imports) = code_parser.parse_file(&file_path);
 
             new_symbols.extend(parsed_syms);
             indexer.store_file_hash(&file_path, &file_hash);
@@ -116,12 +119,12 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
     // Save index
     indexer.save_index()?;
 
-    println!("{:?}", indexer);
+    println!("Index updated successfully.");
     Ok(())
 }
 
 fn initialize_code_parser(language: &str) -> Result<CodeParser, Box<dyn std::error::Error>> {
-    match language {
+    match language.to_lowercase().as_str() {
         "rust" => Ok(CodeParser::new_rust()),
         _ => {
             eprintln!("Unsupported language: {}", language);
@@ -133,8 +136,10 @@ fn initialize_code_parser(language: &str) -> Result<CodeParser, Box<dyn std::err
 fn determine_extensions(
     language: &str,
 ) -> Result<&'static [&'static str], Box<dyn std::error::Error>> {
-    match language {
+    match language.to_lowercase().as_str() {
         "rust" => Ok(&["rs"]),
+        "python" => Ok(&["py"]),
+        "kotlin" => Ok(&["kt"]),
         _ => Err("Unsupported language.".into()),
     }
 }
@@ -154,7 +159,7 @@ fn collect_files(directory: &str, extensions: &[&str]) -> Vec<String> {
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            // skip hidden dirs, target, etc.
+            // Skip hidden dirs, target, etc.
             if file_name.starts_with(".")
                 || file_name == "target"
                 || file_name == "node_modules"
