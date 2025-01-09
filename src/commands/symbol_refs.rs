@@ -1,12 +1,11 @@
-use crate::indexer::Indexer;
 use std::fs;
+
+use crate::errors::ContextMeshError;
+use crate::indexer::Indexer;
 
 /// Show all symbols that depend on a given symbol (by name)
 /// and print context lines around the referencing location.
-pub fn handle_symbol_refs(
-    symbol_name: &str,
-    context_lines: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_symbol_refs(symbol_name: &str, context_lines: usize) -> Result<(), ContextMeshError> {
     let indexer = Indexer::load_index()?;
 
     // Build name map: symbol name -> list of symbol hashes
@@ -29,7 +28,7 @@ pub fn handle_symbol_refs(
         for (_other_hash, other_sym) in indexer.get_symbols() {
             // If dependencies contain `sym_hash`, then other_sym references target_sym
             if other_sym.dependencies.contains(sym_hash) {
-                referencing_symbols.push(other_sym);
+                referencing_symbols.push(other_sym.clone());
             }
         }
 
@@ -43,17 +42,25 @@ pub fn handle_symbol_refs(
             println!(" - {} (in file {})", ref_sym.name, ref_sym.file_path);
 
             // Optional: read lines around ref_sym.line_number
-            if let Ok(content) = fs::read_to_string(&ref_sym.file_path) {
-                let lines: Vec<&str> = content.lines().collect();
-                // ref_sym.line_number is 1-based, so do minus 1 for indexing
-                let line_idx = ref_sym.line_number.saturating_sub(1);
-                let lower_bound = line_idx.saturating_sub(context_lines);
-                let upper_bound = (line_idx + context_lines + 1).min(lines.len());
+            match fs::read_to_string(&ref_sym.file_path) {
+                Ok(content) => {
+                    let lines: Vec<&str> = content.lines().collect();
+                    // ref_sym.line_number is 1-based, so do minus 1 for indexing
+                    let line_idx = ref_sym.line_number.saturating_sub(1);
+                    let lower_bound = line_idx.saturating_sub(context_lines);
+                    let upper_bound = (line_idx + context_lines + 1).min(lines.len());
 
-                for i in lower_bound..upper_bound {
-                    println!("{:4} | {}", i + 1, lines[i]);
+                    for i in lower_bound..upper_bound {
+                        println!("{:4} | {}", i + 1, lines[i]);
+                    }
+                    println!("---");
                 }
-                println!("---");
+                Err(e) => {
+                    eprintln!(
+                        "Failed to read file '{}': {}. Skipping context lines.",
+                        ref_sym.file_path, e
+                    );
+                }
             }
         }
     }

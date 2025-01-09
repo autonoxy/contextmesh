@@ -1,13 +1,10 @@
 pub mod symbol;
 
+use crate::errors::ContextMeshError;
 use crate::indexer::symbol::Symbol;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::HashMap,
-    fs,
-    io::{Error, ErrorKind},
-};
+use std::{collections::HashMap, fs};
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Indexer {
@@ -20,7 +17,7 @@ impl Indexer {
         Indexer::default()
     }
 
-    pub fn load_index() -> std::io::Result<Self> {
+    pub fn load_index() -> Result<Self, ContextMeshError> {
         let path = ".contextmesh/index.bin";
 
         if !std::path::Path::new(path).exists() {
@@ -34,15 +31,9 @@ impl Indexer {
             });
         }
 
-        let data = fs::read(path).map_err(|e| {
-            eprintln!("Failed to read index file '{}': {}", path, e);
-            Error::new(ErrorKind::Other, "Failed to read index file.")
-        })?;
-
-        let indexer: Indexer = bincode::deserialize(&data).map_err(|e| {
-            eprintln!("Failed to deserialize index file: '{}': {}", path, e);
-            Error::new(ErrorKind::Other, "Deserialization failed.")
-        })?;
+        let data = fs::read(path).map_err(|e| ContextMeshError::IoError(e))?;
+        let indexer: Indexer = bincode::deserialize(&data)
+            .map_err(|e| ContextMeshError::DeserializationError(e.to_string()))?;
 
         println!(
             "Loaded index: {} file(s), {} symbol(s).",
@@ -53,10 +44,10 @@ impl Indexer {
         Ok(indexer)
     }
 
-    pub fn save_index(&self) -> std::io::Result<()> {
+    pub fn save_index(&self) -> Result<(), ContextMeshError> {
         let path = ".contextmesh/index.bin";
         let encoded = bincode::serialize(self)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("Serialization failed: {}", e)))?;
+            .map_err(|e| ContextMeshError::SerializationError(e.to_string()))?;
 
         fs::write(path, encoded)?;
 
@@ -67,12 +58,6 @@ impl Indexer {
         );
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn add_symbol(&mut self, symbol: Symbol) {
-        let key = symbol.hash();
-        self.symbols.insert(key, symbol);
     }
 
     pub fn get_symbols(&self) -> &HashMap<String, Symbol> {

@@ -1,7 +1,7 @@
 pub mod language; // The trait
 pub mod rust_indexer; // The Rust plugin
 
-use crate::indexer::symbol::Symbol;
+use crate::{errors::ContextMeshError, indexer::symbol::Symbol};
 use language::LanguageIndexer;
 use rust_indexer::RustIndexer;
 use std::collections::HashMap;
@@ -13,41 +13,40 @@ pub struct CodeParser {
 }
 
 impl CodeParser {
-    pub fn new_rust() -> Self {
+    pub fn new_rust() -> Result<Self, ContextMeshError> {
         let mut parser = Parser::new();
         parser
             .set_language(tree_sitter_rust::language())
-            .expect("Error loading Rust grammar.");
+            .map_err(|_| {
+                ContextMeshError::TreeSitterError("Failed to set Rust language.".to_string())
+            })?;
 
-        CodeParser {
+        Ok(CodeParser {
             parser,
             plugin: Box::new(RustIndexer),
-        }
+        })
     }
 
     /// Parse a single file, returning (symbols, imports).
-    pub fn parse_file(&mut self, file_path: &str) -> (Vec<Symbol>, HashMap<String, String>) {
+    pub fn parse_file(
+        &mut self,
+        file_path: &str,
+    ) -> Result<(Vec<Symbol>, HashMap<String, String>), ContextMeshError> {
         println!(
             "Parsing file '{}' using {} indexer...",
             file_path,
             self.plugin.language_name()
         );
 
-        let code = match std::fs::read(file_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to read file {}: {}", file_path, e);
-                return (vec![], HashMap::new());
-            }
-        };
+        let code = std::fs::read(file_path).map_err(|e| {
+            eprintln!("Failed to read file {}: {}", file_path, e);
+            ContextMeshError::TreeSitterError("Parsing returned no tree.".to_string())
+        })?;
 
-        let tree = match self.parser.parse(&code, None) {
-            Some(t) => t,
-            None => {
-                eprintln!("Failed to parse file {}", file_path);
-                return (vec![], HashMap::new());
-            }
-        };
+        let tree = self.parser.parse(&code, None).ok_or_else(|| {
+            eprintln!("Failed to parse file {}.", file_path);
+            ContextMeshError::TreeSitterError("Parsing returned no tree.".to_string())
+        })?;
 
         let root = tree.root_node();
 
@@ -58,7 +57,7 @@ impl CodeParser {
         let mut current_module = Vec::new();
 
         // 1) Collect definitions + imports in one pass
-        collect_definitions_and_imports(
+        let _ = collect_definitions_and_imports(
             &*self.plugin,
             root,
             &code,
@@ -70,7 +69,7 @@ impl CodeParser {
 
         // 2) Gather references
         let mut symbol_stack = Vec::new();
-        gather_references(
+        let _ = gather_references(
             &*self.plugin,
             root,
             &code,
@@ -80,7 +79,7 @@ impl CodeParser {
             &mut symbol_stack,
         );
 
-        (symbols, imports)
+        Ok((symbols, imports))
     }
 }
 
@@ -93,30 +92,29 @@ fn collect_definitions_and_imports(
     symbols: &mut Vec<Symbol>,
     imports: &mut HashMap<String, String>,
     current_module: &mut Vec<String>,
-) {
+) -> Result<(), ContextMeshError> {
     // Enter module if applicable
-    lang.enter_module(node, code, current_module);
+    lang.enter_module(node, code, current_module)?;
 
     let node_kind = node.kind();
 
     // If it's an import node, pass it to the language plugin:
-    lang.process_import_declaration(node, code, imports);
+    lang.process_import_declaration(node, code, imports)?;
 
     // If node kind is in `allowed_definition_kinds`, build a Symbol:
     if lang.allowed_definition_kinds().contains(&node_kind) {
-        if let Some(full_name) = lang.build_qualified_name(node, code) {
-            let start = node.start_position();
-            symbols.push(Symbol {
-                name: full_name,
-                node_kind: node_kind.to_string(),
-                file_path: file_path.to_string(),
-                line_number: start.row + 1,
-                start_byte: node.start_byte(),
-                end_byte: node.end_byte(),
-                dependencies: vec![],
-                used_by: vec![],
-            });
-        }
+        let full_name = lang.build_qualified_name(node, code)?;
+        let start = node.start_position();
+        symbols.push(Symbol {
+            name: full_name,
+            node_kind: node_kind.to_string(),
+            file_path: file_path.to_string(),
+            line_number: start.row + 1,
+            start_byte: node.start_byte(),
+            end_byte: node.end_byte(),
+            dependencies: vec![],
+            used_by: vec![],
+        });
     }
 
     // Recurse children
@@ -129,11 +127,13 @@ fn collect_definitions_and_imports(
             symbols,
             imports,
             current_module,
-        );
+        )?;
     }
 
     // Exit module if applicable
-    lang.exit_module(current_module);
+    lang.exit_module(current_module)?;
+
+    Ok(())
 }
 
 /// Traverse the AST to gather references.
@@ -145,7 +145,7 @@ fn gather_references(
     symbols: &mut Vec<Symbol>,
     imports: &HashMap<String, String>,
     symbol_stack: &mut Vec<usize>,
-) {
+) -> Result<(), ContextMeshError> {
     let node_kind = node.kind();
 
     // If there's a 'name' field, this might be a new symbol scope
@@ -158,20 +158,29 @@ fn gather_references(
 
             // Recurse children
             for child in node.children(&mut node.walk()) {
-                gather_references(lang, child, code, file_path, symbols, imports, symbol_stack);
+                gather_references(lang, child, code, file_path, symbols, imports, symbol_stack)?;
             }
 
             symbol_stack.pop();
-            return;
+            return Ok(());
         }
     }
 
     // Check for call expressions
     if node_kind == "call_expression" {
         if let Some(func_node) = node.child_by_field_name("function") {
-            if let Some(call_name) = lang.extract_callable_name(func_node, code, imports) {
-                if let Some(&parent_idx) = symbol_stack.last() {
-                    symbols[parent_idx].dependencies.push(call_name);
+            match lang.extract_callable_name(func_node, code, imports) {
+                Ok(call_name) => {
+                    if let Some(&parent_idx) = symbol_stack.last() {
+                        symbols[parent_idx].dependencies.push(call_name);
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to extract callable name in file '{}': {}",
+                        file_path, e
+                    );
+                    // Depending on requirements, you might choose to continue or return
                 }
             }
         }
@@ -180,15 +189,28 @@ fn gather_references(
     else if node_kind == "method_call_expression" {
         // Tree-sitter Rust: method_call_expression has child_by_field_name("method") for the method name
         if let Some(method_node) = node.child_by_field_name("method") {
-            let method_str = method_node.utf8_text(code).unwrap_or_default().to_string();
-            if let Some(&parent_idx) = symbol_stack.last() {
-                symbols[parent_idx].dependencies.push(method_str);
+            match method_node.utf8_text(code) {
+                Ok(method_str) => {
+                    if let Some(&parent_idx) = symbol_stack.last() {
+                        symbols[parent_idx]
+                            .dependencies
+                            .push(method_str.to_string());
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Failed to extract method name in file '{}': {}",
+                        file_path, e
+                    );
+                }
             }
         }
     }
 
     // Recurse children
     for child in node.children(&mut node.walk()) {
-        gather_references(lang, child, code, file_path, symbols, imports, symbol_stack);
+        gather_references(lang, child, code, file_path, symbols, imports, symbol_stack)?;
     }
+
+    Ok(())
 }

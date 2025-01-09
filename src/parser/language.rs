@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use tree_sitter::Node;
 
+use crate::errors::ContextMeshError;
+
 /// Defines how to parse a specific language's code (Rust, Python, etc.),
 /// building "fully qualified" names and references.
 pub trait LanguageIndexer {
@@ -11,7 +13,7 @@ pub trait LanguageIndexer {
     fn allowed_definition_kinds(&self) -> &'static [&'static str];
 
     /// Given a node for a definition, build its fully qualified name.
-    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Option<String>;
+    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Result<String, ContextMeshError>;
 
     /// If the language supports import/use statements, parse them to fill `imports`.
     fn process_import_declaration(
@@ -19,7 +21,7 @@ pub trait LanguageIndexer {
         node: Node,
         code: &[u8],
         imports: &mut HashMap<String, String>,
-    );
+    ) -> Result<(), ContextMeshError>;
 
     /// Given a node that represents a call/reference, return a string
     /// that might match a local definition's name.
@@ -28,11 +30,16 @@ pub trait LanguageIndexer {
         node: Node,
         code: &[u8],
         imports: &HashMap<String, String>,
-    ) -> Option<String>;
+    ) -> Result<String, ContextMeshError>;
 
     /// Handle entering a new module scope.
-    fn enter_module(&self, node: Node, code: &[u8], current_module: &mut Vec<String>);
+    fn enter_module(
+        &self,
+        node: Node,
+        code: &[u8],
+        current_module: &mut Vec<String>,
+    ) -> Result<(), ContextMeshError>;
 
     /// Handle exiting a module scope.
-    fn exit_module(&self, current_module: &mut Vec<String>);
+    fn exit_module(&self, current_module: &mut Vec<String>) -> Result<(), ContextMeshError>;
 }

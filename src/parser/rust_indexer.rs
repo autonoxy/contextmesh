@@ -1,3 +1,5 @@
+use crate::errors::ContextMeshError;
+
 use super::language::LanguageIndexer;
 use std::collections::HashMap;
 use tree_sitter::Node;
@@ -24,12 +26,16 @@ impl LanguageIndexer for RustIndexer {
         ]
     }
 
-    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Option<String> {
+    fn build_qualified_name(&self, node: Node, code: &[u8]) -> Result<String, ContextMeshError> {
         // Extract the symbol's short name
-        let name_node = node.child_by_field_name("name")?;
-        let short_name = name_node.utf8_text(code).ok()?;
+        let name_node = node.child_by_field_name("name").ok_or_else(|| {
+            ContextMeshError::DeserializationError("Name node not found.".to_string())
+        })?;
+        let short_name = name_node.utf8_text(code).map_err(|_| {
+            ContextMeshError::DeserializationError("Failed to extract name text.".to_string())
+        })?;
 
-        Some(short_name.to_string())
+        Ok(short_name.to_string())
     }
 
     fn process_import_declaration(
@@ -37,9 +43,9 @@ impl LanguageIndexer for RustIndexer {
         node: Node,
         code: &[u8],
         imports: &mut HashMap<String, String>,
-    ) {
+    ) -> Result<(), ContextMeshError> {
         if node.kind() != "use_declaration" {
-            return;
+            return Ok(());
         }
 
         // Handle 'use' declarations with potential aliases
@@ -48,16 +54,26 @@ impl LanguageIndexer for RustIndexer {
 
         // Extract the path
         if let Some(path_node) = node.child_by_field_name("path") {
-            let path_text = match path_node.utf8_text(code) {
-                Ok(text) => text.to_string(),
-                Err(_) => return,
-            };
+            let path_text = path_node
+                .utf8_text(code)
+                .map_err(|_| {
+                    ContextMeshError::DeserializationError(
+                        "Failed to extract path text.".to_string(),
+                    )
+                })?
+                .to_string();
 
             // Check for an alias
             if let Some(alias_node) = node.child_by_field_name("alias") {
-                if let Ok(alias_text) = alias_node.utf8_text(code) {
-                    imports.insert(alias_text.to_string(), path_text);
-                }
+                let alias_text = alias_node
+                    .utf8_text(code)
+                    .map_err(|_| {
+                        ContextMeshError::DeserializationError(
+                            "Failed to extract alias text.".to_string(),
+                        )
+                    })?
+                    .to_string();
+                imports.insert(alias_text.to_string(), path_text);
             } else {
                 // No alias; insert the last segment as the identifier
                 if let Some(last_segment) = path_text.split("::").last() {
@@ -65,6 +81,8 @@ impl LanguageIndexer for RustIndexer {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn extract_callable_name(
@@ -72,47 +90,81 @@ impl LanguageIndexer for RustIndexer {
         node: Node,
         code: &[u8],
         imports: &HashMap<String, String>,
-    ) -> Option<String> {
+    ) -> Result<String, ContextMeshError> {
         let node_kind = node.kind();
         match node_kind {
             "identifier" => {
-                let text = node.utf8_text(code).ok()?;
+                let text = node.utf8_text(code).map_err(|_| {
+                    ContextMeshError::DeserializationError(
+                        "Failed to extract identifier text.".to_string(),
+                    )
+                })?;
                 // Replace with full path if alias exists
                 if let Some(full_path) = imports.get(text) {
-                    Some(full_path.clone())
+                    Ok(full_path.clone())
                 } else {
-                    Some(text.to_string())
+                    Ok(text.to_string())
                 }
             }
             "scoped_identifier" => {
                 // e.g., "commands::run_command"
-                let raw = node.utf8_text(code).ok()?;
+                let raw = node.utf8_text(code).map_err(|_| {
+                    ContextMeshError::DeserializationError(
+                        "Failed to extract scoped identifier text.".to_string(),
+                    )
+                })?;
 
-                Some(raw.split("::").last().map(|s| s.to_string())?)
+                Ok(raw
+                    .split("::")
+                    .last()
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| {
+                        ContextMeshError::DeserializationError(
+                            "Failed to extract last segment of scoped identifier.".to_string(),
+                        )
+                    })?)
             }
             "field_expression" => {
                 // e.g., "my_struct.foo" - typically method calls aren't re-exported
                 // Could implement deeper resolution if needed
-                None
+                Err(ContextMeshError::DeserializationError(
+                    "Field expressions are not supported.".to_string(),
+                ))
             }
-            _ => None,
+            _ => Err(ContextMeshError::DeserializationError(format!(
+                "Unsupported node kind: {}",
+                node_kind
+            ))),
         }
     }
 
-    fn enter_module(&self, node: Node, code: &[u8], current_module: &mut Vec<String>) {
+    fn enter_module(
+        &self,
+        node: Node,
+        code: &[u8],
+        current_module: &mut Vec<String>,
+    ) -> Result<(), ContextMeshError> {
         if node.kind() == "mod_item" {
             // Extract module name
             if let Some(name_node) = node.child_by_field_name("name") {
-                if let Ok(name) = name_node.utf8_text(code) {
-                    current_module.push(name.to_string());
-                }
+                let name = name_node
+                    .utf8_text(code)
+                    .map_err(|_| {
+                        ContextMeshError::DeserializationError(
+                            "Failed to extract module name.".to_string(),
+                        )
+                    })?
+                    .to_string();
+                current_module.push(name);
             }
         }
+        Ok(())
     }
 
-    fn exit_module(&self, current_module: &mut Vec<String>) {
+    fn exit_module(&self, current_module: &mut Vec<String>) -> Result<(), ContextMeshError> {
         if !current_module.is_empty() {
             current_module.pop();
         }
+        Ok(())
     }
 }

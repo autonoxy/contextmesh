@@ -3,6 +3,7 @@ pub mod index;
 pub mod print_index;
 pub mod symbol_refs;
 
+use crate::errors::ContextMeshError;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -33,7 +34,7 @@ pub enum Commands {
     },
 }
 
-pub fn run_command(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_command(args: Cli) -> Result<(), ContextMeshError> {
     match args.command {
         Commands::Index { file, language } => index::handle_index(&file, &language),
         Commands::Combine => combine::handle_combine(),

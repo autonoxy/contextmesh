@@ -1,15 +1,13 @@
+use crate::errors::ContextMeshError;
 use crate::indexer::Indexer;
 
-pub fn handle_print_index() -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_print_index() -> Result<(), ContextMeshError> {
     println!("Loading index...");
 
-    let indexer = match Indexer::load_index() {
-        Ok(indexer) => indexer,
-        Err(e) => {
-            eprintln!("Failed to load index: {}", e);
-            return Err(Box::from("Failed to load index"));
-        }
-    };
+    let indexer = Indexer::load_index().map_err(|e| {
+        eprintln!("Failed to load index: {}", e);
+        e
+    })?;
 
     println!("Indexed symbols:");
     for (hash, symbol) in indexer.get_symbols() {
@@ -18,4 +16,3 @@ pub fn handle_print_index() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

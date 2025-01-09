@@ -4,12 +4,13 @@ use log::{debug, info, warn};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
+use crate::errors::ContextMeshError;
 use crate::indexer::calculate_file_hash;
 use crate::indexer::symbol::Symbol;
 use crate::indexer::Indexer;
 use crate::parser::CodeParser;
 
-pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn handle_index(file: &str, language: &str) -> Result<(), ContextMeshError> {
     // Initialize logging (ensure this is set up in your main function)
     // For example, in main.rs:
     // env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -43,7 +44,7 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
         if indexer.has_changed(file_path, &file_hash) {
             info!("File '{}' changed. Parsing...", file_path);
             // **Remove the 'language' argument here**
-            let (parsed_syms, _parsed_imports) = code_parser.parse_file(file_path);
+            let (parsed_syms, _parsed_imports) = code_parser.parse_file(file_path)?;
 
             new_symbols.extend(parsed_syms);
             indexer.store_file_hash(file_path, &file_hash);
@@ -53,17 +54,10 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
         }
     }
 
-    // ----------------------------------------------------------------
-    // STEP A) Merge old + new symbols into one list
-    // ----------------------------------------------------------------
     let mut merged_symbols: Vec<Symbol> = indexer.get_symbols().values().cloned().collect();
     merged_symbols.extend(new_symbols);
     debug!("Merged symbols: {} total.", merged_symbols.len());
 
-    // ----------------------------------------------------------------
-    // STEP B) Build name->hash map for ALL symbols
-    //         (maps symbol name to a list of hashes)
-    // ----------------------------------------------------------------
     let mut name_to_hash: HashMap<String, Vec<String>> = HashMap::new();
     for sym in &merged_symbols {
         name_to_hash
@@ -76,9 +70,6 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
         name_to_hash.len()
     );
 
-    // ----------------------------------------------------------------
-    // STEP C) Move symbols into a HashMap<hash, Symbol>
-    // ----------------------------------------------------------------
     let mut symbol_map: HashMap<String, Symbol> = HashMap::new();
     for sym in merged_symbols {
         let sym_hash = sym.hash();
@@ -159,24 +150,26 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn initialize_code_parser(language: &str) -> Result<CodeParser, Box<dyn std::error::Error>> {
+fn initialize_code_parser(language: &str) -> Result<CodeParser, ContextMeshError> {
     match language.to_lowercase().as_str() {
-        "rust" => Ok(CodeParser::new_rust()),
+        "rust" => CodeParser::new_rust().map_err(|e| {
+            eprintln!(
+                "Failed to initialize CodeParser for language '{}': {}",
+                language, e
+            );
+            e
+        }),
         _ => {
             eprintln!("Unsupported language: {}", language);
-            Err(Box::from("Unsupported language."))
+            Err(ContextMeshError::UnsupportedLanguage(language.to_string()))
         }
     }
 }
 
-fn determine_extensions(
-    language: &str,
-) -> Result<&'static [&'static str], Box<dyn std::error::Error>> {
+fn determine_extensions(language: &str) -> Result<&'static [&'static str], ContextMeshError> {
     match language.to_lowercase().as_str() {
         "rust" => Ok(&["rs"]),
-        "python" => Ok(&["py"]),
-        "kotlin" => Ok(&["kt"]),
-        _ => Err("Unsupported language.".into()),
+        _ => Err(ContextMeshError::UnsupportedLanguage(language.to_string())),
     }
 }
 
