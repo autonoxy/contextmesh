@@ -78,17 +78,10 @@ impl Indexer {
         let path = ".contextmesh/index.bin";
 
         if !std::path::Path::new(path).exists() {
-            eprintln!(
-                "Index file '{}' does not exist. Returning empty index.",
-                path
-            );
-            return Ok(Indexer {
-                file_hashes: HashMap::new(),
-                symbols: HashMap::new(),
-            });
+            return Err(ContextMeshError::IndexNotFound(path.to_string()));
         }
 
-        let data = fs::read(path).map_err(|e| ContextMeshError::IoError(e))?;
+        let data = fs::read(path).map_err(ContextMeshError::IoError)?;
         let indexer: Indexer = bincode::deserialize(&data)
             .map_err(|e| ContextMeshError::DeserializationError(e.to_string()))?;
 

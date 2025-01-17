@@ -11,6 +11,7 @@ pub enum ContextMeshError {
     SerializationError(String),
     DeserializationError(String),
     ClipboardError(String),
+    IndexNotFound(String),
 }
 
 impl fmt::Display for ContextMeshError {
@@ -27,6 +28,9 @@ impl fmt::Display for ContextMeshError {
             ContextMeshError::SerializationError(e) => write!(f, "Serialization Error: {}", e),
             ContextMeshError::DeserializationError(e) => write!(f, "Deserialization Error: {}", e),
             ContextMeshError::ClipboardError(e) => write!(f, "Clipboard Error: {}", e),
+            ContextMeshError::IndexNotFound(path) => {
+                write!(f, "Index file not found at path: {}", path)
+            }
         }
     }
 }

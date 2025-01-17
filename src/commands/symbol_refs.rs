@@ -25,7 +25,7 @@ pub fn handle_symbol_refs(symbol_name: &str, context_lines: usize) -> Result<(),
 
         // We want to see who references sym_hash in their dependencies
         let mut referencing_symbols = Vec::new();
-        for (_other_hash, other_sym) in indexer.get_symbols() {
+        for other_sym in indexer.get_symbols().values() {
             // If dependencies contain `sym_hash`, then other_sym references target_sym
             if other_sym.dependencies.contains(sym_hash) {
                 referencing_symbols.push(other_sym.clone());
@@ -50,9 +50,10 @@ pub fn handle_symbol_refs(symbol_name: &str, context_lines: usize) -> Result<(),
                     let lower_bound = line_idx.saturating_sub(context_lines);
                     let upper_bound = (line_idx + context_lines + 1).min(lines.len());
 
-                    for i in lower_bound..upper_bound {
-                        println!("{:4} | {}", i + 1, lines[i]);
+                    for (i, line) in lines.iter().enumerate().take(upper_bound).skip(lower_bound) {
+                        println!("{:4} | {}", i + 1, line);
                     }
+
                     println!("---");
                 }
                 Err(e) => {
