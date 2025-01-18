@@ -91,14 +91,15 @@ impl LanguageIndexer for RustIndexer {
     /// or a `ContextMeshError` on failure.
     fn build_qualified_name(&self, node: Node, code: &[u8]) -> Result<String, ContextMeshError> {
         // Extract the symbol's short name
-        let name_node = node.child_by_field_name("name").ok_or_else(|| {
-            ContextMeshError::DeserializationError("Name node not found.".to_string())
-        })?;
-        let short_name = name_node.utf8_text(code).map_err(|_| {
-            ContextMeshError::DeserializationError("Failed to extract name text.".to_string())
-        })?;
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let short_name = name_node.utf8_text(code).map_err(|_| {
+                ContextMeshError::DeserializationError("Failed to extract name text.".to_string())
+            })?;
 
-        Ok(short_name.to_string())
+            Ok(short_name.to_string())
+        } else {
+            Ok(String::new())
+        }
     }
 
     /// Parses Rust import declarations (`use` statements) to populate the `imports` map.
@@ -252,17 +253,7 @@ impl LanguageIndexer for RustIndexer {
                         )
                     })?)
             }
-            "field_expression" => {
-                // e.g., "my_struct.foo" - typically method calls aren't re-exported
-                // Could implement deeper resolution if needed
-                Err(ContextMeshError::DeserializationError(
-                    "Field expressions are not supported.".to_string(),
-                ))
-            }
-            _ => Err(ContextMeshError::DeserializationError(format!(
-                "Unsupported node kind: {}",
-                node_kind
-            ))),
+            _ => Ok(String::new()),
         }
     }
 
