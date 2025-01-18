@@ -135,50 +135,6 @@ impl Indexer {
         Ok(())
     }
 
-    /// Retrieves a reference to the symbols stored in the indexer.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// let symbols = indexer.get_symbols();
-    /// assert!(symbols.is_empty());
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `HashMap` containing symbol hashes mapped to `Symbol` instances.
-    pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
-        &self.symbols
-    }
-
-    /// Replaces the current set of symbols with a new collection.
-    ///
-    /// This method allows for updating the indexer's symbol table by providing a new
-    /// `HashMap` of symbols. Existing symbols will be overwritten by the new ones.
-    ///
-    /// # Arguments
-    ///
-    /// * `new_symbols` - A `HashMap` containing the new symbols to replace the existing ones.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::{Indexer, Symbol};
-    /// use std::collections::HashMap;
-    ///
-    /// let mut indexer = Indexer::new();
-    /// let mut new_symbols = HashMap::new();
-    /// new_symbols.insert("hash1".to_string(), Symbol::default());
-    /// indexer.replace_symbols(new_symbols);
-    /// assert_eq!(indexer.get_symbols().len(), 1);
-    /// ```
-    pub fn replace_symbols(&mut self, new_symbols: HashMap<String, Symbol>) {
-        self.symbols = new_symbols;
-    }
-
     /// Checks whether a file has changed by comparing its current hash with the stored hash.
     ///
     /// This method determines if a file needs to be re-indexed by verifying if its content
@@ -287,6 +243,48 @@ impl Indexer {
                 .push(hash.clone());
         }
         name_map
+    }
+
+    /// Inserts (or updates) a Symbol in the index, keyed by its hash.
+    /// Returns the old symbol if this hash was already in the index.
+    pub fn add_symbol(&mut self, symbol: Symbol) -> Option<Symbol> {
+        let hash = symbol.hash();
+        self.symbols.insert(hash, symbol)
+    }
+
+    /// Removes a symbol by hash. Returns the removed Symbol if it existed.
+    pub fn remove_symbol(&mut self, sym_hash: &str) -> Option<Symbol> {
+        self.symbols.remove(sym_hash)
+    }
+
+    /// Retrieves a reference to the symbols stored in the indexer.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use crate::indexer::symbol::Indexer;
+    ///
+    /// let indexer = Indexer::new();
+    /// let symbols = indexer.get_symbols();
+    /// assert!(symbols.is_empty());
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `HashMap` containing symbol hashes mapped to `Symbol` instances.
+    pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
+        &self.symbols
+    }
+
+    /// Append `caller_hash` into the `used_by` list of the symbol at `callee_hash`.
+    /// Returns `true` if `callee_hash` was found.
+    pub fn add_used_by(&mut self, callee_hash: &str, caller_hash: &str) -> bool {
+        if let Some(callee_sym) = self.symbols.get_mut(callee_hash) {
+            callee_sym.used_by.push(caller_hash.to_string());
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -1,38 +1,29 @@
-// src/commands/index.rs
-
 use log::{debug, info, warn};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::errors::ContextMeshError;
-use crate::indexer::calculate_file_hash;
-use crate::indexer::symbol::Symbol;
-use crate::indexer::Indexer;
+use crate::indexer::{calculate_file_hash, symbol::Symbol, Indexer};
 use crate::parser::CodeParser;
 use crate::utils::collect_files;
 
-pub fn handle_index(file: &str, language: &str) -> Result<(), ContextMeshError> {
-    // Initialize logging (ensure this is set up in your main function)
-    // For example, in main.rs:
-    // env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+/// The public entry point for indexing (truly incremental).
+pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMeshError> {
+    // 1) Prepare index
+    ensure_index_directory_exists(".contextmesh")?;
+    let mut indexer = load_or_create_index()?;
 
-    // 1) Ensure .contextmesh directory exists
-    let index_dir = ".contextmesh";
-    if !std::path::Path::new(index_dir).exists() {
-        std::fs::create_dir_all(index_dir)?;
-        info!("Created directory: {}", index_dir);
-    }
+    // 2) Prepare parser
+    let (extensions, mut code_parser) = prepare_parser(language)?;
 
-    // 2) Load existing index and set up parser
-    let mut code_parser: CodeParser = initialize_code_parser(language)?;
-    let extensions: &[&str] = determine_extensions(language)?;
-    let mut indexer: Indexer = load_existing_index();
+    // 3) Gather all candidate files (based on extension)
+    let files = collect_files(dir_or_file, extensions);
 
-    // 3) Collect files that match your extension(s)
-    let files: Vec<String> = collect_files(file, extensions);
-    let mut new_symbols = Vec::new();
+    // 4) Build a global name->list_of_hashes map from existing index
+    let mut global_name_map = indexer.build_name_map();
 
-    for file_path in &files {
-        let file_hash: String = match calculate_file_hash(file_path) {
+    // 5) Process each changed file individually
+    for file_path in files {
+        let new_hash = match calculate_file_hash(&file_path) {
             Some(h) => h,
             None => {
                 warn!("Could not read/hash file '{}'. Skipping.", file_path);
@@ -40,143 +31,221 @@ pub fn handle_index(file: &str, language: &str) -> Result<(), ContextMeshError> 
             }
         };
 
-        // Only parse if the file has changed
-        if indexer.has_changed(file_path, &file_hash) {
-            info!("File '{}' changed. Parsing...", file_path);
-            // **Remove the 'language' argument here**
-            let (parsed_syms, _parsed_imports) = code_parser.parse_file(file_path)?;
-
-            new_symbols.extend(parsed_syms);
-            indexer.store_file_hash(file_path, &file_hash);
-            debug!("Parsed and stored symbols from '{}'.", file_path);
+        // Only parse if changed
+        if indexer.has_changed(&file_path, &new_hash) {
+            info!("File '{}' changed. Parsing now...", file_path);
+            parse_and_index_file(
+                &file_path,
+                &new_hash,
+                &mut indexer,
+                &mut code_parser,
+                &mut global_name_map,
+            )?;
         } else {
             debug!("File '{}' is up-to-date. Skipping parse.", file_path);
         }
     }
 
-    let mut merged_symbols: Vec<Symbol> = indexer.get_symbols().values().cloned().collect();
-    merged_symbols.extend(new_symbols);
-    debug!("Merged symbols: {} total.", merged_symbols.len());
-
-    let mut name_to_hash: HashMap<String, Vec<String>> = HashMap::new();
-    for sym in &merged_symbols {
-        name_to_hash
-            .entry(sym.name.clone())
-            .or_default()
-            .push(sym.hash());
-    }
-    debug!(
-        "Built name_to_hash map with {} unique names.",
-        name_to_hash.len()
-    );
-
-    let mut symbol_map: HashMap<String, Symbol> = HashMap::new();
-    for sym in merged_symbols {
-        let sym_hash = sym.hash();
-        symbol_map.insert(sym_hash.clone(), sym);
-    }
-    debug!(
-        "Moved symbols into symbol_map with {} symbols.",
-        symbol_map.len()
-    );
-
-    // We'll keep track of edges (caller -> callee) in a separate vector
-    let mut edges = Vec::new();
-
-    // ----------------------------------------------------------------
-    // STEP D) First pass: fix forward dependencies, build edge list
-    // ----------------------------------------------------------------
-    // Convert each symbol's dependencies (raw names) into hashed references.
-    // Also store (caller, callee) in `edges` to fill `used_by` later.
-    for (this_hash, sym) in symbol_map.iter_mut() {
-        let mut unique_deps = HashSet::new();
-
-        for raw_name in &sym.dependencies {
-            if let Some(dep_hashes) = name_to_hash.get(raw_name) {
-                for dep_hash in dep_hashes {
-                    // Prevent self-dependency
-                    if dep_hash != this_hash && unique_deps.insert(dep_hash.clone()) {
-                        edges.push((this_hash.clone(), dep_hash.clone()));
-                        debug!(
-                            "Symbol '{}' (Hash: {}) depends on Symbol Hash: {}",
-                            sym.name, this_hash, dep_hash
-                        );
-                    }
-                }
-            } else {
-                warn!(
-                    "Dependency '{}' for Symbol '{}' (Hash: {}) not found in name_map.",
-                    raw_name, sym.name, this_hash
-                );
-            }
-        }
-
-        // **Directly mutate the symbol's dependencies without using get_mut**
-        sym.dependencies = unique_deps.into_iter().collect();
-    }
-    info!("First pass completed: Resolved dependencies and built edge list.");
-
-    // ----------------------------------------------------------------
-    // STEP E) Second pass: fill in reverse edges (used_by)
-    // ----------------------------------------------------------------
-    // Iterate through `edges` to populate `used_by` for each callee symbol.
-    for (caller_hash, callee_hash) in &edges {
-        if let Some(dep_sym) = symbol_map.get_mut(callee_hash) {
-            dep_sym.used_by.push(caller_hash.clone());
-            debug!(
-                "Symbol Hash: {} is used by Symbol Hash: {}",
-                callee_hash, caller_hash
-            );
-        } else {
-            warn!(
-                "Callee Symbol Hash: {} not found while updating 'used_by'.",
-                callee_hash
-            );
-        }
-    }
-    info!("Second pass completed: Populated 'used_by' fields.");
-
-    // ----------------------------------------------------------------
-    // STEP F) Replace index's symbols with the updated map
-    // ----------------------------------------------------------------
-    indexer.replace_symbols(symbol_map);
-    debug!("Replaced indexer's symbols with updated symbol_map.");
-
-    // Save the updated index
+    // 6) Save the updated index
     indexer.save_index()?;
-    info!("Index saved successfully.");
-
+    info!("Incremental index updated successfully.");
     println!("Index updated successfully.");
+
     Ok(())
 }
 
-fn initialize_code_parser(language: &str) -> Result<CodeParser, ContextMeshError> {
-    match language.to_lowercase().as_str() {
+// ----------------------------------------------------------------------
+// Step 1: Ensure .contextmesh and Load or Create Index
+// ----------------------------------------------------------------------
+
+fn ensure_index_directory_exists(path: &str) -> Result<(), ContextMeshError> {
+    if !std::path::Path::new(path).exists() {
+        std::fs::create_dir_all(path)?;
+        info!("Created directory: {}", path);
+    }
+    Ok(())
+}
+
+fn load_or_create_index() -> Result<Indexer, ContextMeshError> {
+    println!("Loading existing index...");
+    match Indexer::load_index() {
+        Ok(existing) => Ok(existing),
+        Err(e) => {
+            warn!("No existing index found (or failed to load): {e}. Creating a new one.");
+            Ok(Indexer::new())
+        }
+    }
+}
+
+// ----------------------------------------------------------------------
+// Step 2: Prepare Parser
+// ----------------------------------------------------------------------
+
+fn prepare_parser(
+    language: &str,
+) -> Result<(&'static [&'static str], CodeParser), ContextMeshError> {
+    // 1) Initialize code parser
+    let code_parser = match language.to_lowercase().as_str() {
         "rust" => CodeParser::new_rust().map_err(|e| {
             eprintln!(
                 "Failed to initialize CodeParser for language '{}': {}",
                 language, e
             );
             e
-        }),
+        })?,
         _ => {
             eprintln!("Unsupported language: {}", language);
-            Err(ContextMeshError::UnsupportedLanguage(language.to_string()))
+            return Err(ContextMeshError::UnsupportedLanguage(language.to_string()));
         }
+    };
+
+    // 2) Determine extensions
+    let extensions = match language.to_lowercase().as_str() {
+        "rust" => &["rs"],
+        _ => return Err(ContextMeshError::UnsupportedLanguage(language.to_string())),
+    };
+
+    Ok((extensions, code_parser))
+}
+
+// ----------------------------------------------------------------------
+// Step 5: Parse and Index a Single Changed File
+// ----------------------------------------------------------------------
+
+fn parse_and_index_file(
+    file_path: &str,
+    new_hash: &str,
+    indexer: &mut Indexer,
+    code_parser: &mut CodeParser,
+    global_name_map: &mut HashMap<String, Vec<String>>,
+) -> Result<(), ContextMeshError> {
+    // 1) Parse the file => new symbols
+    let new_symbols = parse_file_symbols(file_path, code_parser)?;
+
+    // 2) Build local name->hash for references *within* this file
+    let local_name_map = build_local_name_map(&new_symbols);
+
+    // 3) Insert new symbols into the index & update global name map
+    insert_new_symbols(&new_symbols, indexer, global_name_map);
+
+    // 4) Resolve dependencies right away, linking to local or global symbols
+    resolve_new_symbols_dependencies(
+        &new_symbols,
+        indexer,
+        &local_name_map,
+        global_name_map,
+        file_path,
+    );
+
+    // 5) Mark the file hash so we know it's up to date next run
+    indexer.store_file_hash(file_path, new_hash);
+
+    debug!("Finished incremental update for '{}'.", file_path);
+    Ok(())
+}
+
+// ---- Step 5.1: Parse the file to get new symbols
+fn parse_file_symbols(
+    file_path: &str,
+    code_parser: &mut CodeParser,
+) -> Result<Vec<Symbol>, ContextMeshError> {
+    let (parsed_syms, _imports) = code_parser.parse_file(file_path)?;
+    debug!("Parsed {} symbols from '{}'.", parsed_syms.len(), file_path);
+    Ok(parsed_syms)
+}
+
+// ---- Step 5.2: Build local name->Vec<hash>
+fn build_local_name_map(symbols: &[Symbol]) -> HashMap<String, Vec<String>> {
+    let mut local_map = HashMap::new();
+    for sym in symbols {
+        local_map
+            .entry(sym.name.clone())
+            .or_insert_with(Vec::new)
+            .push(sym.hash());
+    }
+    local_map
+}
+
+// ---- Step 5.3: Insert newly parsed symbols into the index, updating global name_map
+fn insert_new_symbols(
+    new_symbols: &[Symbol],
+    indexer: &mut Indexer,
+    global_name_map: &mut HashMap<String, Vec<String>>,
+) {
+    for sym in new_symbols {
+        let sym_hash = sym.hash();
+
+        // (A) Use the "safe" add_symbol method to store the symbol
+        indexer.add_symbol(sym.clone());
+
+        // (B) Also update the global name_map for cross-file lookups
+        global_name_map
+            .entry(sym.name.clone())
+            .or_default()
+            .push(sym_hash);
     }
 }
 
-fn determine_extensions(language: &str) -> Result<&'static [&'static str], ContextMeshError> {
-    match language.to_lowercase().as_str() {
-        "rust" => Ok(&["rs"]),
-        _ => Err(ContextMeshError::UnsupportedLanguage(language.to_string())),
-    }
-}
+// ---- Step 5.4: Resolve dependencies for each new symbol
+fn resolve_new_symbols_dependencies(
+    new_symbols: &[Symbol],
+    indexer: &mut Indexer,
+    local_name_map: &HashMap<String, Vec<String>>,
+    global_name_map: &HashMap<String, Vec<String>>,
+    file_path: &str,
+) {
+    use log::warn;
+    use std::collections::HashSet;
+    use std::mem::take;
 
-fn load_existing_index() -> Indexer {
-    println!("Loading existing index...");
-    match Indexer::load_index() {
-        Ok(existing_indexer) => existing_indexer,
-        Err(_) => Indexer::new(),
+    for sym in new_symbols {
+        let this_hash = sym.hash();
+
+        // 1) Remove the symbol from the index so we have full ownership over it,
+        //    avoiding the "double mutable borrow" issue.
+        if let Some(mut updated_sym) = indexer.remove_symbol(&this_hash) {
+            // 2) Take the old raw dependency names from `updated_sym`
+            let old_deps = take(&mut updated_sym.dependencies);
+
+            // 3) We'll store the newly hashed references here
+            let mut new_dep_hashes = HashSet::new();
+
+            // 4) For each raw dependency name, see if it’s local or global
+            for raw_name in old_deps {
+                // local references first
+                if let Some(candidates) = local_name_map.get(&raw_name) {
+                    for dep_hash in candidates {
+                        if dep_hash != &this_hash {
+                            new_dep_hashes.insert(dep_hash.clone());
+                            // Link back
+                            // (Now safe, because we don't hold a mutable ref to the symbol in the map)
+                            indexer.add_used_by(dep_hash, &this_hash);
+                        }
+                    }
+                }
+                // if not local, check global
+                else if let Some(candidates) = global_name_map.get(&raw_name) {
+                    for dep_hash in candidates {
+                        if dep_hash != &this_hash {
+                            new_dep_hashes.insert(dep_hash.clone());
+                            indexer.add_used_by(dep_hash, &this_hash);
+                        }
+                    }
+                }
+                // not found
+                else {
+                    warn!(
+                        "Dependency '{}' not found for symbol '{}'. (File: {})",
+                        raw_name, updated_sym.name, file_path
+                    );
+                }
+            }
+
+            // 5) Store the hashed dependencies in `updated_sym`
+            updated_sym.dependencies = new_dep_hashes.into_iter().collect();
+
+            // 6) Reinsert the symbol into the index (or call `add_symbol(updated_sym)`)
+            indexer.add_symbol(updated_sym);
+        }
     }
 }
