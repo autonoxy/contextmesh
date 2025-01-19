@@ -4,7 +4,7 @@ pub mod rust_indexer; // The Rust plugin
 use crate::{errors::ContextMeshError, indexer::symbol::Symbol};
 use language::LanguageIndexer;
 use rust_indexer::RustIndexer;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::{Node, Parser};
 
 /// `CodeParser` is responsible for parsing source files, extracting symbols,
@@ -188,18 +188,19 @@ fn collect_definitions_and_imports(
 
     // If the node kind is among the allowed definitions, build and store the symbol
     if lang.allowed_definition_kinds().contains(&node_kind) {
-        let full_name = lang.build_qualified_name(node, code)?;
         let start = node.start_position();
-        symbols.push(Symbol {
-            name: full_name,
-            node_kind: node_kind.to_string(),
-            file_path: file_path.to_string(),
-            line_number: start.row + 1,
-            start_byte: node.start_byte(),
-            end_byte: node.end_byte(),
-            dependencies: vec![],
-            used_by: vec![],
-        });
+        if let Ok(full_name) = lang.build_qualified_name(node, code) {
+            symbols.push(Symbol {
+                name: full_name,
+                node_kind: node_kind.to_string(),
+                file_path: file_path.to_string(),
+                line_number: start.row + 1,
+                start_byte: node.start_byte(),
+                end_byte: node.end_byte(),
+                dependencies: HashSet::new(),
+                used_by: HashSet::new(),
+            });
+        }
     }
 
     // Recursively traverse all child nodes
@@ -274,7 +275,7 @@ fn gather_references(
             match lang.extract_callable_name(func_node, code, imports) {
                 Ok(call_name) => {
                     if let Some(&parent_idx) = symbol_stack.last() {
-                        symbols[parent_idx].dependencies.push(call_name);
+                        symbols[parent_idx].dependencies.insert(call_name);
                     }
                 }
                 Err(e) => {
@@ -296,7 +297,7 @@ fn gather_references(
                     if let Some(&parent_idx) = symbol_stack.last() {
                         symbols[parent_idx]
                             .dependencies
-                            .push(method_str.to_string());
+                            .insert(method_str.to_string());
                     }
                 }
                 Err(e) => {

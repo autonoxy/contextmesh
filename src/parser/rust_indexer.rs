@@ -98,7 +98,9 @@ impl LanguageIndexer for RustIndexer {
 
             Ok(short_name.to_string())
         } else {
-            Ok(String::new())
+            Err(ContextMeshError::DeserializationError(
+                "Skipping empty-named item.".to_string(),
+            ))
         }
     }
 

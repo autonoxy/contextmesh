@@ -1,5 +1,6 @@
 use log::{debug, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::mem::take;
 
 use crate::errors::ContextMeshError;
 use crate::indexer::{calculate_file_hash, symbol::Symbol, Indexer};
@@ -8,7 +9,7 @@ use crate::utils::collect_files;
 
 /// The public entry point for indexing (truly incremental).
 pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMeshError> {
-    // 1) Prepare index
+    // 1) Ensure .contextmesh directory
     ensure_index_directory_exists(".contextmesh")?;
     let mut indexer = load_or_create_index()?;
 
@@ -34,6 +35,10 @@ pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMesh
         // Only parse if changed
         if indexer.has_changed(&file_path, &new_hash) {
             info!("File '{}' changed. Parsing now...", file_path);
+
+            // Remove old/renamed/deleted symbols from this file
+            remove_deleted_symbols_in_file(&mut indexer, &file_path, &mut global_name_map);
+
             parse_and_index_file(
                 &file_path,
                 &new_hash,
@@ -46,7 +51,10 @@ pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMesh
         }
     }
 
-    // 6) Save the updated index
+    // 6) Re-check any unresolved references (forward references, etc.)
+    indexer.recheck_unresolved();
+
+    // 7) Save the updated index
     indexer.save_index()?;
     info!("Incremental index updated successfully.");
     println!("Index updated successfully.");
@@ -109,8 +117,41 @@ fn prepare_parser(
 }
 
 // ----------------------------------------------------------------------
-// Step 5: Parse and Index a Single Changed File
+// Step 5: Parse + Cleanup + Index a Single Changed File
 // ----------------------------------------------------------------------
+
+/// Remove old symbols from this file if they no longer exist or have been renamed.
+/// Also remove them from the `global_name_map`.
+fn remove_deleted_symbols_in_file(
+    indexer: &mut Indexer,
+    file_path: &str,
+    global_name_map: &mut HashMap<String, Vec<String>>,
+) {
+    // Gather all existing symbols from this file
+    let old_symbols: Vec<(String, String)> = indexer
+        .get_symbols()
+        .iter()
+        .filter_map(|(hash, sym)| {
+            if sym.file_path == file_path {
+                Some((hash.clone(), sym.name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Remove them from index + global map
+    for (old_hash, old_name) in old_symbols {
+        indexer.remove_symbol(&old_hash);
+
+        if let Some(vec_of_hashes) = global_name_map.get_mut(&old_name) {
+            vec_of_hashes.retain(|h| h != &old_hash);
+            if vec_of_hashes.is_empty() {
+                global_name_map.remove(&old_name);
+            }
+        }
+    }
+}
 
 fn parse_and_index_file(
     file_path: &str,
@@ -194,15 +235,11 @@ fn resolve_new_symbols_dependencies(
     global_name_map: &HashMap<String, Vec<String>>,
     file_path: &str,
 ) {
-    use log::warn;
-    use std::collections::HashSet;
-    use std::mem::take;
-
     for sym in new_symbols {
         let this_hash = sym.hash();
 
-        // 1) Remove the symbol from the index so we have full ownership over it,
-        //    avoiding the "double mutable borrow" issue.
+        // 1) Remove the symbol from the index so we have full ownership,
+        //    avoiding double mutable borrows.
         if let Some(mut updated_sym) = indexer.remove_symbol(&this_hash) {
             // 2) Take the old raw dependency names from `updated_sym`
             let old_deps = take(&mut updated_sym.dependencies);
@@ -212,40 +249,46 @@ fn resolve_new_symbols_dependencies(
 
             // 4) For each raw dependency name, see if it’s local or global
             for raw_name in old_deps {
-                // local references first
-                if let Some(candidates) = local_name_map.get(&raw_name) {
-                    for dep_hash in candidates {
-                        if dep_hash != &this_hash {
-                            new_dep_hashes.insert(dep_hash.clone());
-                            // Link back
-                            // (Now safe, because we don't hold a mutable ref to the symbol in the map)
-                            indexer.add_used_by(dep_hash, &this_hash);
-                        }
-                    }
-                }
-                // if not local, check global
-                else if let Some(candidates) = global_name_map.get(&raw_name) {
-                    for dep_hash in candidates {
-                        if dep_hash != &this_hash {
-                            new_dep_hashes.insert(dep_hash.clone());
-                            indexer.add_used_by(dep_hash, &this_hash);
-                        }
-                    }
-                }
-                // not found
-                else {
+                let candidates = resolve_one_dependency(&raw_name, local_name_map, global_name_map);
+                if candidates.is_empty() {
                     warn!(
                         "Dependency '{}' not found for symbol '{}'. (File: {})",
                         raw_name, updated_sym.name, file_path
                     );
+                    // Store it in unresolved, in case we parse it later
+                    indexer.add_unresolved_dep(this_hash.clone(), raw_name);
+                } else {
+                    for dep_hash in candidates {
+                        if dep_hash != this_hash {
+                            new_dep_hashes.insert(dep_hash.clone());
+                            indexer.add_used_by(&dep_hash, &this_hash);
+                        }
+                    }
                 }
             }
 
             // 5) Store the hashed dependencies in `updated_sym`
             updated_sym.dependencies = new_dep_hashes.into_iter().collect();
 
-            // 6) Reinsert the symbol into the index (or call `add_symbol(updated_sym)`)
+            // 6) Reinsert the symbol into the index
             indexer.add_symbol(updated_sym);
         }
+    }
+}
+
+// ----------------------------------------------------------------------
+// A small utility: check local first, then global. Return all candidate hashes.
+// ----------------------------------------------------------------------
+fn resolve_one_dependency(
+    raw_name: &str,
+    local_name_map: &HashMap<String, Vec<String>>,
+    global_name_map: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    if let Some(local_candidates) = local_name_map.get(raw_name) {
+        local_candidates.clone()
+    } else if let Some(global_candidates) = global_name_map.get(raw_name) {
+        global_candidates.clone()
+    } else {
+        Vec::new()
     }
 }

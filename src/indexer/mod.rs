@@ -6,77 +6,29 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, fs};
 
-/// `Indexer` is responsible for managing the indexing of source files,
-/// tracking file hashes, and maintaining a collection of symbols extracted
-/// from the codebase.
-///
-/// It provides functionalities to load and save the index, check for file changes,
-/// and build mappings of symbol names to their unique identifiers.
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Indexer {
-    /// Maps file paths to their corresponding SHA256 content hashes.
-    ///
-    /// This allows the indexer to determine if a file has changed since the last indexing,
-    /// facilitating efficient updates by avoiding re-indexing unchanged files.
-    file_hashes: HashMap<String, String>, // Maps file paths to their content hashes
+    /// Maps file paths -> their SHA256 content hashes
+    file_hashes: HashMap<String, String>,
 
-    /// Maps unique symbol hashes to their corresponding `Symbol` structures.
-    ///
-    /// Each `Symbol` contains metadata about a particular symbol in the codebase,
-    /// such as its name, kind, location, and dependencies.
+    /// Maps unique symbol hashes -> their Symbol structures
     symbols: HashMap<String, Symbol>,
+
+    /// Records references that can't be resolved yet (e.g., forward references).
+    /// Key = caller symbol hash, Value = list of raw names that don't exist yet.
+    unresolved_deps: HashMap<String, Vec<String>>,
 }
 
 impl Indexer {
-    /// Creates a new, empty `Indexer` instance.
-    ///
-    /// This method initializes the `Indexer` with default values, setting up empty
-    /// hash maps for `file_hashes` and `symbols`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// assert!(indexer.file_hashes.is_empty());
-    /// assert!(indexer.symbols.is_empty());
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A new instance of `Indexer` with empty `file_hashes` and `symbols`.
+    /// Create a new, empty Indexer
     pub fn new() -> Self {
         Indexer::default()
     }
 
-    /// Loads the index from a binary file, deserializing its contents into an `Indexer` instance.
-    ///
-    /// This method attempts to read the index from the specified path. If the index file
-    /// does not exist, it returns an empty `Indexer`. Otherwise, it deserializes the
-    /// file's contents into the `Indexer` structure.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ContextMeshError::IoError` if the file cannot be read.
-    /// Returns `ContextMeshError::DeserializationError` if deserialization fails.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::errors::ContextMeshError;
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::load_index().expect("Failed to load index");
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the loaded `Indexer` on success,
-    /// or a `ContextMeshError` on failure.
+    // ----------------- Loading / Saving -----------------
+
     pub fn load_index() -> Result<Self, ContextMeshError> {
         let path = ".contextmesh/index.bin";
-
         if !std::path::Path::new(path).exists() {
             return Err(ContextMeshError::IndexNotFound(path.to_string()));
         }
@@ -88,37 +40,12 @@ impl Indexer {
         println!(
             "Loaded index: {} file(s), {} symbol(s).",
             indexer.file_hashes.len(),
-            indexer.symbols.len(),
+            indexer.symbols.len()
         );
 
         Ok(indexer)
     }
 
-    /// Saves the current index to a binary file by serializing its contents.
-    ///
-    /// This method serializes the `Indexer` instance using `bincode` and writes the
-    /// serialized data to the specified path. It provides feedback on the number
-    /// of files and symbols saved.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ContextMeshError::SerializationError` if serialization fails.
-    /// Returns `ContextMeshError::IoError` if the file cannot be written.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::errors::ContextMeshError;
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// indexer.save_index().expect("Failed to save index");
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `Result` which is `Ok(())` if the index was successfully saved,
-    /// or a `ContextMeshError` if an error occurred.
     pub fn save_index(&self) -> Result<(), ContextMeshError> {
         let path = ".contextmesh/index.bin";
         let encoded = bincode::serialize(self)
@@ -127,38 +54,17 @@ impl Indexer {
         fs::write(path, encoded)?;
 
         println!(
-            "Index saved: {} file(s), {} symbol(s).",
+            "Index saved: {} file(s), {} symbol(s), unresolved references: {}.",
             self.file_hashes.len(),
             self.symbols.len(),
+            self.unresolved_deps.len()
         );
 
         Ok(())
     }
 
-    /// Checks whether a file has changed by comparing its current hash with the stored hash.
-    ///
-    /// This method determines if a file needs to be re-indexed by verifying if its content
-    /// hash has changed since the last indexing. If the file is new or its hash differs
-    /// from the stored hash, the method returns `true`.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - A string slice representing the path to the file.
-    /// * `new_hash` - A string slice containing the newly calculated hash of the file's content.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// let has_changed = indexer.has_changed("src/main.rs", "newhashvalue");
-    /// assert!(has_changed);
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// `true` if the file is new or its hash has changed; `false` otherwise.
+    // ----------------- File Hash Logic -----------------
+
     pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
         match self.file_hashes.get(file_path) {
             Some(existing_hash) => existing_hash != new_hash,
@@ -166,74 +72,18 @@ impl Indexer {
         }
     }
 
-    /// Stores or updates the hash of a file in the indexer's hash map.
-    ///
-    /// This method records the hash of a file, allowing the indexer to track changes
-    /// and determine if re-indexing is necessary in the future.
-    ///
-    /// # Arguments
-    ///
-    /// * `file` - A string slice representing the path to the file.
-    /// * `file_hash` - A string slice containing the hash of the file's content.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let mut indexer = Indexer::new();
-    /// indexer.store_file_hash("src/main.rs", "hashvalue123");
-    /// assert_eq!(indexer.get_file_hashes().get("src/main.rs"), Some(&"hashvalue123".to_string()));
-    /// ```
     pub fn store_file_hash(&mut self, file: &str, file_hash: &str) {
         self.file_hashes
             .insert(file.to_string(), file_hash.to_string());
     }
 
-    /// Retrieves a reference to the file hashes stored in the indexer.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// let file_hashes = indexer.get_file_hashes();
-    /// assert!(file_hashes.is_empty());
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `HashMap` containing file paths mapped to their content hashes.
     pub fn get_file_hashes(&self) -> &HashMap<String, String> {
         &self.file_hashes
     }
 
-    /// Builds a mapping from symbol names to their corresponding hashes.
-    ///
-    /// This method creates a `HashMap` where each key is a symbol's name, and the value
-    /// is a vector of hashes representing that symbol. This allows for efficient lookup
-    /// of symbols by name, accommodating cases where multiple symbols share the same name.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::{Indexer, Symbol};
-    /// use std::collections::HashMap;
-    ///
-    /// let mut indexer = Indexer::new();
-    /// let mut symbols = HashMap::new();
-    /// symbols.insert("hash1".to_string(), Symbol::new("foo"));
-    /// symbols.insert("hash2".to_string(), Symbol::new("foo"));
-    /// indexer.replace_symbols(symbols);
-    ///
-    /// let name_map = indexer.build_name_map();
-    /// assert_eq!(name_map.get("foo").unwrap().len(), 2);
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `HashMap` mapping symbol names (`String`) to a vector of their corresponding hashes (`Vec<String>`).
+    // ----------------- Name Map -----------------
+
+    /// Build a map from name -> list of symbol hashes
     pub fn build_name_map(&self) -> HashMap<String, Vec<String>> {
         let mut name_map = HashMap::new();
         for (hash, sym) in &self.symbols {
@@ -245,71 +95,115 @@ impl Indexer {
         name_map
     }
 
-    /// Inserts (or updates) a Symbol in the index, keyed by its hash.
-    /// Returns the old symbol if this hash was already in the index.
+    // ----------------- Symbol Insert / Remove / Link -----------------
+
+    /// Insert or update a Symbol by its hash. Returns old symbol if replaced.
     pub fn add_symbol(&mut self, symbol: Symbol) -> Option<Symbol> {
         let hash = symbol.hash();
         self.symbols.insert(hash, symbol)
     }
 
-    /// Removes a symbol by hash. Returns the removed Symbol if it existed.
+    /// Remove a symbol by hash, returning it if it existed.
     pub fn remove_symbol(&mut self, sym_hash: &str) -> Option<Symbol> {
-        self.symbols.remove(sym_hash)
+        let removed_sym = self.symbols.remove(sym_hash);
+
+        if removed_sym.is_some() {
+            for s in self.symbols.values_mut() {
+                s.used_by.remove(sym_hash);
+            }
+        }
+
+        removed_sym
     }
 
-    /// Retrieves a reference to the symbols stored in the indexer.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::indexer::symbol::Indexer;
-    ///
-    /// let indexer = Indexer::new();
-    /// let symbols = indexer.get_symbols();
-    /// assert!(symbols.is_empty());
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `HashMap` containing symbol hashes mapped to `Symbol` instances.
+    /// Retrieve an immutable reference to the entire symbol map
     pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
         &self.symbols
     }
 
-    /// Append `caller_hash` into the `used_by` list of the symbol at `callee_hash`.
-    /// Returns `true` if `callee_hash` was found.
+    /// Append `caller_hash` into the `used_by` of `callee_hash`.
     pub fn add_used_by(&mut self, callee_hash: &str, caller_hash: &str) -> bool {
-        if let Some(callee_sym) = self.symbols.get_mut(callee_hash) {
-            callee_sym.used_by.push(caller_hash.to_string());
+        if let Some(sym) = self.symbols.get_mut(callee_hash) {
+            sym.used_by.insert(caller_hash.to_string());
             true
         } else {
             false
         }
     }
+
+    // ----------------- Unresolved Deps -----------------
+
+    /// Record a raw dependency that doesn't yet exist in the index
+    pub fn add_unresolved_dep(&mut self, caller_hash: String, missing_name: String) {
+        self.unresolved_deps
+            .entry(caller_hash)
+            .or_default()
+            .push(missing_name);
+    }
+
+    /// Attempt to recheck the unresolved references. Any that can now be found
+    /// (because we've parsed more files) will be resolved; leftover remain unresolved.
+    pub fn recheck_unresolved(&mut self) {
+        use std::collections::HashMap;
+
+        // We'll move the entire map out of self so we don't hold a mutable borrow of unresolved_deps
+        let drained: Vec<(String, Vec<String>)> = self.unresolved_deps.drain().collect();
+        let mut still_unresolved = HashMap::new();
+
+        // Build a name map once here. If you expect the name map to change as we fix references,
+        // you can rebuild it inside the loop or after each fix. But typically once at the start is enough.
+        let global_map = self.build_name_map();
+
+        // For each (caller_symbol_hash, list_of_missing_names)
+        for (caller_hash, missing_names) in drained {
+            // We remove the caller symbol so we can safely mutate it offline
+            if let Some(mut caller_sym) = self.remove_symbol(&caller_hash) {
+                let mut leftover = Vec::new();
+                // We'll store (dep_hash, caller_hash) pairs we want to link
+                let mut used_by_links = Vec::new();
+
+                // For each missing name
+                for raw_name in missing_names {
+                    if let Some(dep_hashes) = global_map.get(&raw_name) {
+                        // We can link them now => but we won't call add_used_by just yet
+                        for dep_h in dep_hashes {
+                            if dep_h != &caller_hash {
+                                // 1) Add a new dependency to caller_sym
+                                caller_sym.dependencies.insert(dep_h.clone());
+                                // 2) Record that we'll do `add_used_by(dep_h, caller_hash)` later
+                                used_by_links.push((dep_h.clone(), caller_hash.clone()));
+                            }
+                        }
+                    } else {
+                        // still can't resolve => leftover
+                        leftover.push(raw_name);
+                    }
+                }
+
+                // Reinsert the symbol in the index
+                self.add_symbol(caller_sym);
+
+                // Now that caller_sym is no longer borrowed, we can safely call `add_used_by`.
+                for (dep_h, caller_h) in used_by_links {
+                    self.add_used_by(&dep_h, &caller_h);
+                }
+
+                // If leftover is not empty, we put them back in `still_unresolved`
+                if !leftover.is_empty() {
+                    still_unresolved.insert(caller_hash, leftover);
+                }
+            } else {
+                // If the symbol no longer exists in the index, skip
+                // (maybe it was removed or renamed)
+            }
+        }
+
+        // Update self.unresolved_deps with the ones we still couldn't fix
+        self.unresolved_deps = still_unresolved;
+    }
 }
 
 /// Calculates the SHA256 hash of a file's content.
-///
-/// This function reads the specified file, computes its SHA256 hash, and returns
-/// the hash as a hexadecimal `String`. If the file cannot be read, it returns `None`.
-///
-/// # Arguments
-///
-/// * `file_path` - A string slice representing the path to the file.
-///
-/// # Examples
-///
-/// ```rust
-/// use crate::indexer::symbol::calculate_file_hash;
-///
-/// let hash = calculate_file_hash("src/main.rs").expect("Failed to calculate file hash");
-/// println!("File hash: {}", hash);
-/// ```
-///
-/// # Returns
-///
-/// An `Option<String>` containing the hexadecimal SHA256 hash of the file's content if successful,
-/// or `None` if the file could not be read.
 pub fn calculate_file_hash(file_path: &str) -> Option<String> {
     let content = std::fs::read(file_path).ok()?;
     let mut hasher = Sha256::new();

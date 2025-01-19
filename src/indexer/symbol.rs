@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 /// Represents a symbol extracted from the codebase.
 ///
@@ -34,13 +35,13 @@ pub struct Symbol {
     ///
     /// Dependencies indicate relationships where this symbol relies on other symbols,
     /// such as function calls, trait implementations, or struct field types.
-    pub dependencies: Vec<String>,
+    pub dependencies: HashSet<String>,
 
     /// A list of hashes representing symbols that depend on this symbol.
     ///
     /// The `used_by` field establishes reverse dependencies, showing which symbols
     /// are influenced or utilize this symbol.
-    pub used_by: Vec<String>,
+    pub used_by: HashSet<String>,
 }
 
 impl Symbol {
