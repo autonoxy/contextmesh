@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem::take;
 
 use crate::errors::ContextMeshError;
-use crate::indexer::{calculate_file_hash, symbol::Symbol, Indexer};
+use crate::indexer::{file_hashes::calculate_file_hash, symbol::Symbol, Indexer};
 use crate::parser::CodeParser;
 use crate::utils::collect_files;
 

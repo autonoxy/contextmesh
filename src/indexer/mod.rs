@@ -1,15 +1,17 @@
+pub mod file_hashes;
 pub mod symbol;
 
 use crate::errors::ContextMeshError;
 use crate::indexer::symbol::Symbol;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{collections::HashMap, fs};
+
+use file_hashes::FileHashManager;
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Indexer {
     /// Maps file paths -> their SHA256 content hashes
-    file_hashes: HashMap<String, String>,
+    file_hashes: FileHashManager,
 
     /// Maps unique symbol hashes -> their Symbol structures
     symbols: HashMap<String, Symbol>,
@@ -66,18 +68,14 @@ impl Indexer {
     // ----------------- File Hash Logic -----------------
 
     pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
-        match self.file_hashes.get(file_path) {
-            Some(existing_hash) => existing_hash != new_hash,
-            None => true,
-        }
+        self.file_hashes.has_changed(file_path, new_hash)
     }
 
-    pub fn store_file_hash(&mut self, file: &str, file_hash: &str) {
-        self.file_hashes
-            .insert(file.to_string(), file_hash.to_string());
+    pub fn store_file_hash(&mut self, file_path: &str, file_hash: &str) {
+        self.file_hashes.insert(file_path, file_hash);
     }
 
-    pub fn get_file_hashes(&self) -> &HashMap<String, String> {
+    pub fn get_file_hashes(&self) -> &FileHashManager {
         &self.file_hashes
     }
 
@@ -201,12 +199,4 @@ impl Indexer {
         // Update self.unresolved_deps with the ones we still couldn't fix
         self.unresolved_deps = still_unresolved;
     }
-}
-
-/// Calculates the SHA256 hash of a file's content.
-pub fn calculate_file_hash(file_path: &str) -> Option<String> {
-    let content = std::fs::read(file_path).ok()?;
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    Some(format!("{:x}", hasher.finalize()))
 }
