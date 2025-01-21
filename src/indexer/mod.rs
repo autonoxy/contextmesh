@@ -1,20 +1,28 @@
 pub mod file_hashes;
 pub mod symbol;
+pub mod symbol_store;
 
 use crate::errors::ContextMeshError;
-use crate::indexer::symbol::Symbol;
+use crate::parser::CodeParser;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs};
+use std::mem::take;
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+};
+use symbol::Symbol;
+use symbol_store::SymbolStore;
 
 use file_hashes::FileHashManager;
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Indexer {
     /// Maps file paths -> their SHA256 content hashes
-    file_hashes: FileHashManager,
+    pub file_hashes: FileHashManager,
 
     /// Maps unique symbol hashes -> their Symbol structures
-    symbols: HashMap<String, Symbol>,
+    pub symbol_store: SymbolStore,
 
     /// Records references that can't be resolved yet (e.g., forward references).
     /// Key = caller symbol hash, Value = list of raw names that don't exist yet.
@@ -22,12 +30,9 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    /// Create a new, empty Indexer
     pub fn new() -> Self {
         Indexer::default()
     }
-
-    // ----------------- Loading / Saving -----------------
 
     pub fn load_index() -> Result<Self, ContextMeshError> {
         let path = ".contextmesh/index.bin";
@@ -42,7 +47,7 @@ impl Indexer {
         println!(
             "Loaded index: {} file(s), {} symbol(s).",
             indexer.file_hashes.len(),
-            indexer.symbols.len()
+            indexer.symbol_store.len()
         );
 
         Ok(indexer)
@@ -58,74 +63,174 @@ impl Indexer {
         println!(
             "Index saved: {} file(s), {} symbol(s), unresolved references: {}.",
             self.file_hashes.len(),
-            self.symbols.len(),
+            self.symbol_store.len(),
             self.unresolved_deps.len()
         );
 
         Ok(())
     }
 
-    // ----------------- File Hash Logic -----------------
+    pub fn parse_and_index_file(
+        &mut self,
+        file_path: &str,
+        new_hash: &str,
+        code_parser: &mut CodeParser,
+    ) -> Result<(), ContextMeshError> {
+        // Parse the file => new symbols
+        let new_symbols = self.parse_file_symbols(file_path, code_parser)?;
 
-    pub fn has_changed(&self, file_path: &str, new_hash: &str) -> bool {
-        self.file_hashes.has_changed(file_path, new_hash)
+        // Build local name->hash for references *within* this file
+        let mut global_name_map = self.symbol_store.build_name_map();
+        let local_name_map = self.build_local_name_map(&new_symbols);
+
+        // Insert new symbols into the index & update global name map
+        self.insert_new_symbols(&new_symbols, &mut global_name_map);
+
+        // Resolve dependencies right away, linking to local or global symbols
+        self.resolve_new_symbols_dependencies(
+            &new_symbols,
+            &local_name_map,
+            &global_name_map,
+            file_path,
+        );
+
+        // Mark the file hash so we know it's up to date next run
+        self.file_hashes.insert(file_path, new_hash);
+
+        debug!("Finished incremental update for '{}'.", file_path);
+        Ok(())
     }
 
-    pub fn store_file_hash(&mut self, file_path: &str, file_hash: &str) {
-        self.file_hashes.insert(file_path, file_hash);
-    }
+    pub fn remove_deleted_symbols_in_file(&mut self, file_path: &str) {
+        let mut global_name_map = self.symbol_store.build_name_map();
 
-    pub fn get_file_hashes(&self) -> &FileHashManager {
-        &self.file_hashes
-    }
+        // Gather all existing symbols from this file
+        let old_symbols: Vec<(String, String)> = self
+            .symbol_store
+            .get_symbols()
+            .iter()
+            .filter_map(|(hash, sym)| {
+                if sym.file_path == file_path {
+                    Some((hash.clone(), sym.name.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-    // ----------------- Name Map -----------------
+        // Remove them from index + global map
+        for (old_hash, old_name) in old_symbols {
+            self.symbol_store.remove_symbol(&old_hash);
 
-    /// Build a map from name -> list of symbol hashes
-    pub fn build_name_map(&self) -> HashMap<String, Vec<String>> {
-        let mut name_map = HashMap::new();
-        for (hash, sym) in &self.symbols {
-            name_map
-                .entry(sym.name.clone())
-                .or_insert_with(Vec::new)
-                .push(hash.clone());
-        }
-        name_map
-    }
-
-    // ----------------- Symbol Insert / Remove / Link -----------------
-
-    /// Insert or update a Symbol by its hash. Returns old symbol if replaced.
-    pub fn add_symbol(&mut self, symbol: Symbol) -> Option<Symbol> {
-        let hash = symbol.hash();
-        self.symbols.insert(hash, symbol)
-    }
-
-    /// Remove a symbol by hash, returning it if it existed.
-    pub fn remove_symbol(&mut self, sym_hash: &str) -> Option<Symbol> {
-        let removed_sym = self.symbols.remove(sym_hash);
-
-        if removed_sym.is_some() {
-            for s in self.symbols.values_mut() {
-                s.used_by.remove(sym_hash);
+            if let Some(vec_of_hashes) = global_name_map.get_mut(&old_name) {
+                vec_of_hashes.retain(|h| h != &old_hash);
+                if vec_of_hashes.is_empty() {
+                    global_name_map.remove(&old_name);
+                }
             }
         }
-
-        removed_sym
     }
 
-    /// Retrieve an immutable reference to the entire symbol map
-    pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
-        &self.symbols
+    fn parse_file_symbols(
+        &self,
+        file_path: &str,
+        code_parser: &mut CodeParser,
+    ) -> Result<Vec<Symbol>, ContextMeshError> {
+        let (parsed_syms, _imports) = code_parser.parse_file(file_path)?;
+        debug!("Parsed {} symbols from '{}'.", parsed_syms.len(), file_path);
+        Ok(parsed_syms)
     }
 
-    /// Append `caller_hash` into the `used_by` of `callee_hash`.
-    pub fn add_used_by(&mut self, callee_hash: &str, caller_hash: &str) -> bool {
-        if let Some(sym) = self.symbols.get_mut(callee_hash) {
-            sym.used_by.insert(caller_hash.to_string());
-            true
+    fn build_local_name_map(&self, symbols: &[Symbol]) -> HashMap<String, Vec<String>> {
+        let mut local_map = HashMap::new();
+        for sym in symbols {
+            local_map
+                .entry(sym.name.clone())
+                .or_insert_with(Vec::new)
+                .push(sym.hash());
+        }
+        local_map
+    }
+
+    fn insert_new_symbols(
+        &mut self,
+        new_symbols: &[Symbol],
+        global_name_map: &mut HashMap<String, Vec<String>>,
+    ) {
+        for sym in new_symbols {
+            let sym_hash = sym.hash();
+
+            // (Use the "safe" add_symbol method to store the symbol
+            self.symbol_store.add_symbol(sym.clone());
+
+            // Also update the global name_map for cross-file lookups
+            global_name_map
+                .entry(sym.name.clone())
+                .or_default()
+                .push(sym_hash);
+        }
+    }
+
+    fn resolve_one_dependency(
+        &self,
+        raw_name: &str,
+        local_name_map: &HashMap<String, Vec<String>>,
+        global_name_map: &HashMap<String, Vec<String>>,
+    ) -> Vec<String> {
+        if let Some(local_candidates) = local_name_map.get(raw_name) {
+            local_candidates.clone()
+        } else if let Some(global_candidates) = global_name_map.get(raw_name) {
+            global_candidates.clone()
         } else {
-            false
+            Vec::new()
+        }
+    }
+
+    fn resolve_new_symbols_dependencies(
+        &mut self,
+        new_symbols: &[Symbol],
+        local_name_map: &HashMap<String, Vec<String>>,
+        global_name_map: &HashMap<String, Vec<String>>,
+        file_path: &str,
+    ) {
+        for sym in new_symbols {
+            let this_hash = sym.hash();
+
+            // Remove the symbol from the index so we have full ownership,
+            if let Some(mut updated_sym) = self.symbol_store.remove_symbol(&this_hash) {
+                // Take the old raw dependency names from `updated_sym`
+                let old_deps = take(&mut updated_sym.dependencies);
+
+                // We'll store the newly hashed references here
+                let mut new_dep_hashes = HashSet::new();
+
+                // For each raw dependency name, see if it’s local or global
+                for raw_name in old_deps {
+                    let candidates =
+                        self.resolve_one_dependency(&raw_name, local_name_map, global_name_map);
+                    if candidates.is_empty() {
+                        warn!(
+                            "Dependency '{}' not found for symbol '{}'. (File: {})",
+                            raw_name, updated_sym.name, file_path
+                        );
+                        // Store it in unresolved, in case we parse it later
+                        self.add_unresolved_dep(this_hash.clone(), raw_name);
+                    } else {
+                        for dep_hash in candidates {
+                            if dep_hash != this_hash {
+                                new_dep_hashes.insert(dep_hash.clone());
+                                self.symbol_store.add_used_by(&dep_hash, &this_hash);
+                            }
+                        }
+                    }
+                }
+
+                // Store the hashed dependencies in `updated_sym`
+                updated_sym.dependencies = new_dep_hashes.into_iter().collect();
+
+                // Reinsert the symbol into the index
+                self.symbol_store.add_symbol(updated_sym);
+            }
         }
     }
 
@@ -150,12 +255,12 @@ impl Indexer {
 
         // Build a name map once here. If you expect the name map to change as we fix references,
         // you can rebuild it inside the loop or after each fix. But typically once at the start is enough.
-        let global_map = self.build_name_map();
+        let global_map = self.symbol_store.build_name_map();
 
         // For each (caller_symbol_hash, list_of_missing_names)
         for (caller_hash, missing_names) in drained {
             // We remove the caller symbol so we can safely mutate it offline
-            if let Some(mut caller_sym) = self.remove_symbol(&caller_hash) {
+            if let Some(mut caller_sym) = self.symbol_store.remove_symbol(&caller_hash) {
                 let mut leftover = Vec::new();
                 // We'll store (dep_hash, caller_hash) pairs we want to link
                 let mut used_by_links = Vec::new();
@@ -179,11 +284,11 @@ impl Indexer {
                 }
 
                 // Reinsert the symbol in the index
-                self.add_symbol(caller_sym);
+                self.symbol_store.add_symbol(caller_sym);
 
                 // Now that caller_sym is no longer borrowed, we can safely call `add_used_by`.
                 for (dep_h, caller_h) in used_by_links {
-                    self.add_used_by(&dep_h, &caller_h);
+                    self.symbol_store.add_used_by(&dep_h, &caller_h);
                 }
 
                 // If leftover is not empty, we put them back in `still_unresolved`

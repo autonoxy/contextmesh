@@ -10,7 +10,7 @@ pub fn handle_combine() -> Result<(), ContextMeshError> {
 
     if let Ok(indexer) = indexer_result {
         println!("Index");
-        for file_path in indexer.get_file_hashes().keys() {
+        for file_path in indexer.file_hashes.keys() {
             match fs::read_to_string(file_path) {
                 Ok(content) => {
                     combined_content.push_str(&format!("# {}\n\n{}\n\n", file_path, content));
