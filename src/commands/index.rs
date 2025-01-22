@@ -1,7 +1,7 @@
-use log::{debug, info, warn};
+use log::{info, warn};
 
 use crate::errors::ContextMeshError;
-use crate::indexer::{file_hashes::calculate_file_hash, Indexer};
+use crate::indexer::Indexer;
 use crate::parser::CodeParser;
 use crate::utils::collect_files;
 
@@ -18,24 +18,7 @@ pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMesh
 
     // Process each changed file individually
     for file_path in files {
-        let new_hash = match calculate_file_hash(&file_path) {
-            Some(h) => h,
-            None => {
-                warn!("Could not read/hash file '{}'. Skipping.", file_path);
-                continue;
-            }
-        };
-
-        // Only parse if changed
-        if indexer.file_hashes.has_changed(&file_path, &new_hash) {
-            info!("File '{}' changed. Parsing now...", file_path);
-
-            // Remove old/renamed/deleted symbols from this file
-            indexer.remove_deleted_symbols_in_file(&file_path);
-            indexer.parse_and_index_file(&file_path, &new_hash, &mut code_parser)?;
-        } else {
-            debug!("File '{}' is up-to-date. Skipping parse.", file_path);
-        }
+        indexer.index_file(file_path, &mut code_parser)?;
     }
 
     // Re-check any unresolved references (forward references, etc.)

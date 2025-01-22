@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::fs;
 
 pub fn collect_files(directory: &str, extensions: &[&str]) -> Vec<String> {
@@ -25,4 +26,11 @@ pub fn collect_files(directory: &str, extensions: &[&str]) -> Vec<String> {
         }
     }
     files
+}
+
+pub fn calculate_file_hash(file_path: &str) -> Option<String> {
+    let content = fs::read(file_path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    Some(format!("{:x}", hasher.finalize()))
 }

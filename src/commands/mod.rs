@@ -1,6 +1,6 @@
-pub mod combine;
-pub mod index;
-pub mod print_index;
+mod combine;
+mod index;
+mod print_index;
 
 use crate::errors::ContextMeshError;
 use clap::{Parser, Subcommand};

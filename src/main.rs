@@ -6,6 +6,7 @@ mod commands;
 mod errors;
 mod indexer;
 mod parser;
+mod symbol;
 mod utils;
 
 fn main() {

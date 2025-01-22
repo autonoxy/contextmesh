@@ -1,7 +1,8 @@
 pub mod language; // The trait
 pub mod rust_indexer; // The Rust plugin
 
-use crate::{errors::ContextMeshError, indexer::symbol::Symbol};
+use crate::errors::ContextMeshError;
+use crate::symbol::Symbol;
 use language::LanguageIndexer;
 use rust_indexer::RustIndexer;
 use std::collections::{HashMap, HashSet};

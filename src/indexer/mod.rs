@@ -1,32 +1,35 @@
-pub mod file_hashes;
-pub mod symbol;
-pub mod symbol_store;
+mod dependecy_resolver;
+mod file_hashes;
+mod symbol_store;
 
-use crate::errors::ContextMeshError;
-use crate::parser::CodeParser;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::mem::take;
 use std::{
     collections::{HashMap, HashSet},
     fs,
 };
-use symbol::Symbol;
-use symbol_store::SymbolStore;
 
-use file_hashes::FileHashManager;
+use crate::errors::ContextMeshError;
+use crate::parser::CodeParser;
+use crate::symbol::Symbol;
+use crate::utils::calculate_file_hash;
+
+use self::dependecy_resolver::DependencyResolver;
+use self::file_hashes::FileHashManager;
+use self::symbol_store::SymbolStore;
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Indexer {
     /// Maps file paths -> their SHA256 content hashes
-    pub file_hashes: FileHashManager,
+    file_hashes: FileHashManager,
 
     /// Maps unique symbol hashes -> their Symbol structures
-    pub symbol_store: SymbolStore,
+    symbol_store: SymbolStore,
 
     /// Records references that can't be resolved yet (e.g., forward references).
     /// Key = caller symbol hash, Value = list of raw names that don't exist yet.
-    unresolved_deps: HashMap<String, Vec<String>>,
+    dependency_resolver: DependencyResolver,
 }
 
 impl Indexer {
@@ -64,13 +67,48 @@ impl Indexer {
             "Index saved: {} file(s), {} symbol(s), unresolved references: {}.",
             self.file_hashes.len(),
             self.symbol_store.len(),
-            self.unresolved_deps.len()
+            self.dependency_resolver.len()
         );
 
         Ok(())
     }
 
-    pub fn parse_and_index_file(
+    pub fn get_indexed_files(&self) -> impl Iterator<Item = &String> {
+        self.file_hashes.keys()
+    }
+
+    pub fn get_symbols(&self) -> &HashMap<String, Symbol> {
+        self.symbol_store.get_symbols()
+    }
+
+    pub fn index_file(
+        &mut self,
+        file_path: String,
+        code_parser: &mut CodeParser,
+    ) -> Result<(), ContextMeshError> {
+        let new_hash = match calculate_file_hash(&file_path) {
+            Some(h) => h,
+            None => {
+                warn!("Could not read/hash file '{}'. Skipping.", file_path);
+                return Ok(());
+            }
+        };
+
+        // Only parse if changed
+        if self.file_hashes.has_changed(&file_path, &new_hash) {
+            info!("File '{}' changed. Parsing now...", file_path);
+
+            // Remove old/renamed/deleted symbols from this file
+            self.remove_deleted_symbols_in_file(&file_path);
+            self.parse_and_index_file(&file_path, &new_hash, code_parser)?;
+        } else {
+            debug!("File '{}' is up-to-date. Skipping parse.", file_path);
+        }
+
+        Ok(())
+    }
+
+    fn parse_and_index_file(
         &mut self,
         file_path: &str,
         new_hash: &str,
@@ -101,7 +139,7 @@ impl Indexer {
         Ok(())
     }
 
-    pub fn remove_deleted_symbols_in_file(&mut self, file_path: &str) {
+    fn remove_deleted_symbols_in_file(&mut self, file_path: &str) {
         let mut global_name_map = self.symbol_store.build_name_map();
 
         // Gather all existing symbols from this file
@@ -214,7 +252,8 @@ impl Indexer {
                             raw_name, updated_sym.name, file_path
                         );
                         // Store it in unresolved, in case we parse it later
-                        self.add_unresolved_dep(this_hash.clone(), raw_name);
+                        // self.add_unresolved_dep(this_hash.clone(), raw_name);
+                        self.dependency_resolver.add(this_hash.clone(), raw_name);
                     } else {
                         for dep_hash in candidates {
                             if dep_hash != this_hash {
@@ -236,21 +275,11 @@ impl Indexer {
 
     // ----------------- Unresolved Deps -----------------
 
-    /// Record a raw dependency that doesn't yet exist in the index
-    pub fn add_unresolved_dep(&mut self, caller_hash: String, missing_name: String) {
-        self.unresolved_deps
-            .entry(caller_hash)
-            .or_default()
-            .push(missing_name);
-    }
-
     /// Attempt to recheck the unresolved references. Any that can now be found
     /// (because we've parsed more files) will be resolved; leftover remain unresolved.
     pub fn recheck_unresolved(&mut self) {
-        use std::collections::HashMap;
-
         // We'll move the entire map out of self so we don't hold a mutable borrow of unresolved_deps
-        let drained: Vec<(String, Vec<String>)> = self.unresolved_deps.drain().collect();
+        let drained: Vec<(String, Vec<String>)> = self.dependency_resolver.collect_drained();
         let mut still_unresolved = HashMap::new();
 
         // Build a name map once here. If you expect the name map to change as we fix references,
@@ -302,6 +331,7 @@ impl Indexer {
         }
 
         // Update self.unresolved_deps with the ones we still couldn't fix
-        self.unresolved_deps = still_unresolved;
+        self.dependency_resolver
+            .replace_unresolved(still_unresolved);
     }
 }

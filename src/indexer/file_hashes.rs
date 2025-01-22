@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
 
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct FileHashManager {
@@ -29,11 +27,4 @@ impl FileHashManager {
             None => true,
         }
     }
-}
-
-pub fn calculate_file_hash(file_path: &str) -> Option<String> {
-    let content = fs::read(file_path).ok()?;
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    Some(format!("{:x}", hasher.finalize()))
 }

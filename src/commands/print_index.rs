@@ -12,7 +12,7 @@ pub fn handle_print_index() -> Result<(), ContextMeshError> {
     })?;
 
     println!("Indexed symbols:");
-    for (hash, symbol) in indexer.symbol_store.get_symbols() {
+    for (hash, symbol) in indexer.get_symbols() {
         let s = format!("Hash: {}, Symbol: {:?}\n", hash, symbol);
         combined_content.push_str(&format!("Hash: {}, Symbol: {:?}\n", hash, symbol));
         println!("{}", s);

@@ -1,4 +1,4 @@
-use crate::indexer::symbol::Symbol;
+use crate::symbol::Symbol;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

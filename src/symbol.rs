@@ -45,35 +45,6 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    /// Calculates a SHA256 hash of the symbol's key attributes.
-    ///
-    /// This hash uniquely identifies the symbol based on its name, kind, location,
-    /// and position within the source file. It can be used to efficiently compare
-    /// symbols or track changes across different versions of the codebase.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::symbol::Symbol;
-    ///
-    /// let symbol = Symbol {
-    ///     name: "my_function".to_string(),
-    ///     node_kind: "function_item".to_string(),
-    ///     file_path: "src/lib.rs".to_string(),
-    ///     line_number: 10,
-    ///     start_byte: 100,
-    ///     end_byte: 150,
-    ///     dependencies: vec!["hash_dep1".to_string()],
-    ///     used_by: vec!["hash_user1".to_string()],
-    /// };
-    ///
-    /// let symbol_hash = symbol.hash();
-    /// println!("Symbol Hash: {}", symbol_hash);
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `String` containing the hexadecimal representation of the SHA256 hash.
     pub fn hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(&self.name);
