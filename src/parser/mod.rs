@@ -25,27 +25,6 @@ pub struct CodeParser {
 
 impl CodeParser {
     /// Creates a new `CodeParser` instance configured for parsing Rust source files.
-    ///
-    /// This method initializes the Tree-sitter parser with the Rust language
-    /// and sets up the Rust-specific indexer.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ContextMeshError::TreeSitterError` if the parser fails to set the Rust language.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::errors::ContextMeshError;
-    /// use crate::parser::CodeParser;
-    ///
-    /// let code_parser = CodeParser::new_rust().expect("Failed to create Rust CodeParser");
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the initialized `CodeParser` on success,
-    /// or a `ContextMeshError` on failure.
     pub fn new_rust() -> Result<Self, ContextMeshError> {
         let mut parser = Parser::new();
         parser
@@ -61,40 +40,6 @@ impl CodeParser {
     }
 
     /// Parses a single source file, extracting symbols and imports.
-    ///
-    /// This method performs the following steps:
-    /// 1. Reads the source file from the provided `file_path`.
-    /// 2. Parses the source code into an AST using Tree-sitter.
-    /// 3. Traverses the AST to collect symbol definitions and import declarations.
-    /// 4. Gathers references to these symbols to establish dependencies.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_path` - A string slice representing the path to the source file to be parsed.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ContextMeshError::IoError` if the file cannot be read.
-    /// Returns `ContextMeshError::TreeSitterError` if parsing fails.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use crate::errors::ContextMeshError;
-    /// use crate::parser::CodeParser;
-    /// use std::collections::HashMap;
-    ///
-    /// let mut code_parser = CodeParser::new_rust()?;
-    /// let (symbols, imports) = code_parser.parse_file("./src/main.rs")?;
-    /// ```
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a tuple with:
-    /// - `Vec<Symbol>`: A vector of symbols extracted from the file.
-    /// - `HashMap<String, String>`: A hashmap mapping aliases to their fully qualified paths.
-    ///
-    /// Or a `ContextMeshError` if an error occurs during parsing.
     pub fn parse_file(
         &mut self,
         file_path: &str,
@@ -153,23 +98,6 @@ impl CodeParser {
 }
 
 /// Traverses the AST to collect symbol definitions and import declarations.
-///
-/// This helper function performs a depth-first traversal of the AST node tree,
-/// extracting symbols and imports using the provided `LanguageIndexer`.
-///
-/// # Arguments
-///
-/// * `lang` - A reference to an object implementing the `LanguageIndexer` trait.
-/// * `node` - The current AST node being traversed.
-/// * `code` - The source code as a byte slice, used to extract textual information from nodes.
-/// * `file_path` - A string slice representing the path to the source file being parsed.
-/// * `symbols` - A mutable reference to a vector where extracted symbols are stored.
-/// * `imports` - A mutable reference to a hashmap where import declarations are stored.
-/// * `current_module` - A mutable reference to a vector maintaining the stack of current modules.
-///
-/// # Errors
-///
-/// Returns `ContextMeshError::DeserializationError` if any part of the traversal fails.
 fn collect_definitions_and_imports(
     lang: &dyn LanguageIndexer,
     node: Node,
@@ -224,23 +152,6 @@ fn collect_definitions_and_imports(
 }
 
 /// Traverses the AST to gather references to previously collected symbols.
-///
-/// This helper function performs a depth-first traversal of the AST node tree,
-/// identifying references to symbols and establishing dependencies between them.
-///
-/// # Arguments
-///
-/// * `lang` - A reference to an object implementing the `LanguageIndexer` trait.
-/// * `node` - The current AST node being traversed.
-/// * `code` - The source code as a byte slice, used to extract textual information from nodes.
-/// * `file_path` - A string slice representing the path to the source file being parsed.
-/// * `symbols` - A mutable reference to a vector where symbols are stored.
-/// * `imports` - A reference to a hashmap containing import declarations.
-/// * `symbol_stack` - A mutable reference to a vector maintaining the stack of current symbols.
-///
-/// # Errors
-///
-/// Returns `ContextMeshError::DeserializationError` if any part of the traversal fails.
 fn gather_references(
     lang: &dyn LanguageIndexer,
     node: Node,

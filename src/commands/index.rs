@@ -1,10 +1,44 @@
 use log::{info, warn};
 
 use crate::errors::ContextMeshError;
+use crate::index::Index;
 use crate::indexer::Indexer;
 use crate::parser::CodeParser;
 use crate::utils::collect_files;
 
+fn load_index() -> Result<Index, ContextMeshError> {
+    println!("Loading index...");
+    match Index::load_index() {
+        Ok(index) => Ok(index),
+        Err(e) => {
+            warn!("No existing index found (or failed to load): {e}. Initializing new index.");
+            Ok(Index::new())
+        }
+    }
+}
+
+pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMeshError> {
+    ensure_index_directory_exists(".contextmesh")?;
+    let mut index = load_index()?;
+
+    // Prepare parser
+    let (extensions, mut code_parser) = prepare_parser(language)?;
+
+    // Gather all candidate files (based on extension)
+    let files = collect_files(dir_or_file, extensions);
+
+    for file_path in files {
+        index.index_file(file_path, &mut code_parser)?;
+    }
+
+    index.save_index()?;
+
+    info!("Index updated successfully.");
+
+    Ok(())
+}
+
+/*
 pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMeshError> {
     // Ensure .contextmesh directory
     ensure_index_directory_exists(".contextmesh")?;
@@ -31,6 +65,7 @@ pub fn handle_index(dir_or_file: &str, language: &str) -> Result<(), ContextMesh
 
     Ok(())
 }
+*/
 
 fn ensure_index_directory_exists(path: &str) -> Result<(), ContextMeshError> {
     if !std::path::Path::new(path).exists() {
