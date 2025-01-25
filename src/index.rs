@@ -14,10 +14,10 @@ use crate::{errors::ContextMeshError, symbol::Symbol};
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct Index {
     /// Maps file paths -> their SHA256 content hashes
-    file_hashes: HashMap<String, String>,
+    pub file_hashes: HashMap<String, String>,
 
     /// Maps unique symbol hashes -> their Symbol structure
-    symbols: HashMap<String, Symbol>,
+    pub symbols: HashMap<String, Symbol>,
 
     /// Records references that can't be resolved yet (e.g., forward references).
     /// Key = caller hash symbol, Value = list of raw names that don't exist yet.

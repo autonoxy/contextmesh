@@ -5,7 +5,6 @@ use env_logger::Env;
 mod commands;
 mod errors;
 mod index;
-mod indexer;
 mod parser;
 mod symbol;
 mod utils;

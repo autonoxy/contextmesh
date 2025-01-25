@@ -1,16 +1,16 @@
 use crate::errors::ContextMeshError;
-use crate::indexer::Indexer;
+use crate::index::Index;
 use crate::utils::collect_files;
 use arboard::Clipboard;
 use std::fs;
 
 pub fn handle_combine() -> Result<(), ContextMeshError> {
-    let indexer_result = Indexer::load_index();
+    let index_result = Index::load_index();
     let mut combined_content = String::new();
 
-    if let Ok(indexer) = indexer_result {
+    if let Ok(index) = index_result {
         println!("Index");
-        for file_path in indexer.get_indexed_files() {
+        for file_path in index.file_hashes.keys() {
             match fs::read_to_string(file_path) {
                 Ok(content) => {
                     combined_content.push_str(&format!("# {}\n\n{}\n\n", file_path, content));

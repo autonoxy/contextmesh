@@ -1,18 +1,18 @@
 use crate::errors::ContextMeshError;
-use crate::indexer::Indexer;
+use crate::index::Index;
 use arboard::Clipboard;
 
 pub fn handle_print_index() -> Result<(), ContextMeshError> {
     println!("Loading index...");
     let mut combined_content = String::new();
 
-    let indexer = Indexer::load_index().map_err(|e| {
+    let indexer = Index::load_index().map_err(|e| {
         eprintln!("Failed to load index: {}", e);
         e
     })?;
 
     println!("Indexed symbols:");
-    for (hash, symbol) in indexer.get_symbols() {
+    for (hash, symbol) in indexer.symbols {
         let s = format!("Hash: {}, Symbol: {:?}\n", hash, symbol);
         combined_content.push_str(&format!("Hash: {}, Symbol: {:?}\n", hash, symbol));
         println!("{}", s);
